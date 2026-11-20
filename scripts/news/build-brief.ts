@@ -1,7 +1,7 @@
 /**
  * Builds public/data/brief.json (the "Why gold moved" paragraph) during the deploy job,
- * which runs every 4 hours. Uses GitHub Models (free with the repo's GITHUB_TOKEN) to write the
- * paragraph from real facts + headlines; any failure or rule violation falls back to the
+ * which runs every 4 hours. Uses Google Gemini (free tier; optional GEMINI_API_KEY secret) to summarise
+ * the news from real facts + headlines; any failure or rule violation falls back to the
  * deterministic rule-based paragraph. Never fails the deploy.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -13,20 +13,26 @@ import { usdOzToAedPerG } from '../../src/lib/goldPricing';
 import { fetchDollarMove, mergeHeadlines, NEWS_QUERIES, type Headline } from '../../src/lib/news';
 
 const OUT = 'public/data/brief.json';
-const MODEL = process.env.BRIEF_MODEL || 'openai/gpt-4.1-mini';
+// AI provider: Google Gemini (free tier, key from aistudio.google.com) via its OpenAI-compatible endpoint.
+// GitHub Models, used before, was retired in July 2026. Without a key, the rule-based text is used.
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 
 async function aiCall(system: string, user: string, maxTokens = 600): Promise<string | null> {
-  // JSON-mode is requested for the structured call; the fact-check also answers in JSON.
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) return null;
-  const res = await fetch('https://models.github.ai/inference/chat/completions', {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  const res = await fetch(GEMINI_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: MODEL, temperature: 0.2, max_tokens: maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
     signal: AbortSignal.timeout(45000),
   });
   if (!res.ok) {
-    console.log(`::warning title=AI brief::GitHub Models returned HTTP ${res.status} for ${MODEL}; using the rule-based text.`);
+    console.log(`::warning title=AI brief::Gemini returned HTTP ${res.status} for ${MODEL}; using the rule-based text.`);
+    return null;
+  }
+  if (!(res.headers.get('content-type') ?? '').includes('json')) {
+    console.log('::warning title=AI brief::the AI service did not return JSON; using the rule-based text.');
     return null;
   }
   const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
@@ -63,7 +69,8 @@ async function main() {
 
   // AI writes only the news summaries; each piece is validated, then the whole set is fact-checked.
   let ai: AiNews | null = null;
-  try {
+  if (!process.env.GEMINI_API_KEY) console.log('ai: no GEMINI_API_KEY secret set; using the rule-based text (add a free key to enable AI news summaries)');
+  else try {
     const { system, user } = buildPrompt(e, headlines ?? [], now.toISOString());
     const topicIds = e.why.slice(0, 3).filter((w) => !w.fromData).map((w) => w.id);
     const parsed = parseAiNews(await aiCall(system, user, 900), factsText(e), topicIds);
