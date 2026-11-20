@@ -46,14 +46,14 @@ export function rsi(v: number[], period = 14): number | null {
 }
 
 /** Annualised volatility (%) from sample stdev of the last `window` daily log returns. */
-export function annualisedVolPct(v: number[], window = 30): number | null {
+export function annualisedVolPct(v: number[], window = 30, periodsPerYear = 252): number | null {
   if (v.length < window + 1) return null;
   const s = v.slice(-(window + 1));
   const r: number[] = [];
   for (let i = 1; i < s.length; i++) r.push(Math.log(s[i] / s[i - 1]));
   const mean = r.reduce((a, b) => a + b, 0) / r.length;
   const varc = r.reduce((a, b) => a + (b - mean) ** 2, 0) / (r.length - 1);
-  return Math.sqrt(varc) * Math.sqrt(252) * 100;
+  return Math.sqrt(varc) * Math.sqrt(periodsPerYear) * 100;
 }
 
 /** Worst peak-to-trough fall (%, negative) over the series. */
