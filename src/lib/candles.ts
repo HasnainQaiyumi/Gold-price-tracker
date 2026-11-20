@@ -32,6 +32,7 @@ const MIN_CANDLES = 30;
 
 /** Plausible USD/oz range for gold (same bounds as the live feed). */
 const saneUsd = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 500 && n < 100000;
+export const isSaneUsd = saneUsd;
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
 /** UTC calendar day of an ISO timestamp / epoch ms. */
@@ -196,28 +197,55 @@ export function withLiveCandle(candles: Candle[], spotUsd: number | null, nowIso
   return out;
 }
 
-/** Full prep for the chart: align PAXG to spot, then patch today's candle with spot. */
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Defensive clean-up for candles that did not come straight from parseCoinbaseCandles():
+ * drops rows with a bad day key, non-finite/insane prices, bad volume or inconsistent OHLC,
+ * then sorts ascending and dedupes by day (last wins). lightweight-charts throws on
+ * unsorted or duplicate times, and a throw inside a React effect would take down the page.
+ */
+export function normalizeCandles(candles: readonly Candle[]): Candle[] {
+  const byDay = new Map<string, Candle>();
+  for (const c of candles) {
+    if (!c || typeof c.time !== 'string' || !DAY_RE.test(c.time) || isoDay(`${c.time}T00:00:00Z`) !== c.time) continue;
+    const { open, high, low, close, volume } = c;
+    if (!saneUsd(open) || !saneUsd(high) || !saneUsd(low) || !saneUsd(close)) continue;
+    if (!finite(volume) || volume < 0) continue;
+    const eps = 1e-9 * high;
+    if (high + eps < low || open > high + eps || open < low - eps || close > high + eps || close < low - eps) continue;
+    byDay.set(c.time, { time: c.time, open, high, low, close, volume });
+  }
+  return [...byDay.values()].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+}
+
+/** Full prep for the chart: clean, align PAXG to spot, then patch today's candle with spot. */
 export function prepareCandles(candles: Candle[], spotUsd: number | null, nowIso: string, paxgUsd?: number | null): Candle[] {
-  const k = alignFactor(candles, spotUsd, nowIso, paxgUsd);
-  return withLiveCandle(scaleCandles(candles, k), spotUsd, nowIso);
+  const clean = normalizeCandles(candles);
+  const k = alignFactor(clean, spotUsd, nowIso, paxgUsd);
+  return withLiveCandle(scaleCandles(clean, k), spotUsd, nowIso);
 }
 
 /**
  * Convert USD/oz candles for display (AED, karat, unit) with the app's toAed().
  * high/low are recomputed so they stay the extremes even if the converter is not monotone.
+ * Rows the converter turns into non-finite numbers are dropped rather than charted as garbage.
  */
 export function toDisplay(candles: Candle[], toAed: (usd: number) => number): Candle[] {
-  return candles.map((c) => {
+  const out: Candle[] = [];
+  for (const c of candles) {
     const open = toAed(c.open), high = toAed(c.high), low = toAed(c.low), close = toAed(c.close);
-    return {
+    if (![open, high, low, close].every(Number.isFinite)) continue;
+    out.push({
       time: c.time,
       open,
       close,
       high: Math.max(open, high, low, close),
       low: Math.min(open, high, low, close),
       volume: c.volume,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /** Simple moving average of closes over the last n candles, one point per candle once n are available. */

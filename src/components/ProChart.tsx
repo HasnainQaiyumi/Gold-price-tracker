@@ -16,6 +16,8 @@ import {
 import { Panel, Seg } from './ui';
 import {
   dayChangePct,
+  isoDay,
+  isSaneUsd,
   prepareCandles,
   rangeStart,
   smaLine,
@@ -93,13 +95,18 @@ export function ProChart({
   /* ---------------------------------------------------------------- derived data */
   const view = useMemo(() => {
     if (!candles || candles.length === 0) return null;
-    const usd = prepareCandles(candles, spotUsd, new Date().toISOString(), paxgUsd);
+    const nowIso = new Date().toISOString();
+    const usd = prepareCandles(candles, spotUsd, nowIso, paxgUsd);
     const disp = toDisplay(usd, toAed);
+    if (disp.length === 0) return null;
+    // "live" only when the last candle really is today's (UTC) and was patched with a sane spot.
+    const liveDay = isSaneUsd(spotUsd) && disp[disp.length - 1].time === isoDay(nowIso) ? disp[disp.length - 1].time : null;
     const index = new Map(disp.map((c, i) => [c.time, i]));
     const s50 = smaLine(disp, 50);
     const s200 = smaLine(disp, 200);
     return {
       disp,
+      liveDay,
       index,
       s50,
       s200,
@@ -187,22 +194,32 @@ export function ProChart({
   useEffect(() => {
     const s = seriesRef.current;
     if (!s) return;
-    if (!view) {
+    const clear = () => {
       s.candle.setData([]); s.area.setData([]); s.sma50.setData([]); s.sma200.setData([]); s.volume.setData([]);
       hadData.current = false;
+    };
+    if (!view) {
+      clear();
       return;
     }
-    s.candle.setData(view.disp.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
-    s.area.setData(view.disp.map(({ time, close }) => ({ time, value: close })));
-    s.sma50.setData(view.s50);
-    s.sma200.setData(view.s200);
-    s.volume.setData(
-      view.disp.map((c) => ({
-        time: c.time,
-        value: c.volume,
-        color: c.close >= c.open ? 'rgba(111, 207, 151, 0.32)' : 'rgba(239, 107, 107, 0.32)',
-      }))
-    );
+    try {
+      s.candle.setData(view.disp.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+      s.area.setData(view.disp.map(({ time, close }) => ({ time, value: close })));
+      s.sma50.setData(view.s50);
+      s.sma200.setData(view.s200);
+      s.volume.setData(
+        view.disp.map((c) => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? 'rgba(111, 207, 151, 0.32)' : 'rgba(239, 107, 107, 0.32)',
+        }))
+      );
+    } catch (err) {
+      // Data is normalised upstream, so this should not happen; never let the chart crash the app.
+      console.error('ProChart: could not render candles', err);
+      clear();
+      return;
+    }
     if (!hadData.current) {
       hadData.current = true;
       applyRange(chartRef.current, view.disp, range);
@@ -235,7 +252,7 @@ export function ProChart({
       chg: dayChangePct(view.disp, i),
       s50: view.s50At.get(c.time) ?? null,
       s200: view.s200At.get(c.time) ?? null,
-      live: i === view.disp.length - 1,
+      live: c.time === view.liveDay,
     };
   }, [view, hoverDay]);
 
@@ -268,7 +285,7 @@ export function ProChart({
           <>
             <span className="text-[#fbf7ef] font-semibold font-sans">
               {fmtDate(legend.c.time)}
-              {legend.live && spotUsd !== null && <span className="ml-1.5 text-[#f0cf72] font-normal">live</span>}
+              {legend.live && <span className="ml-1.5 text-[#f0cf72] font-normal">live</span>}
             </span>
             {kv('O', fmt(legend.c.open))}
             {kv('H', fmt(legend.c.high))}

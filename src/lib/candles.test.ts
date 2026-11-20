@@ -4,6 +4,8 @@ import {
   alignFactor,
   dayChangePct,
   fetchPaxgCandles,
+  isSaneUsd,
+  normalizeCandles,
   pageWindows,
   parseCoinbaseCandles,
   parseCoinbaseRow,
@@ -221,6 +223,40 @@ test('prepareCandles aligns history to spot then patches today', () => {
   near(out[0].close, 3510 * k, 1e-6);
   near(out[2].open, 3520 * k, 1e-6);
   assert.equal(out[2].close, 3540);
+});
+
+test('normalizeCandles: drops invalid rows, sorts, dedupes (last wins)', () => {
+  const rows = [
+    c('2026-11-19', 3510, 3530, 3500, 3520),
+    c('2026-11-18', 3500, 3520, 3490, 3510),
+    c('2026-11-19', 3511, 3531, 3501, 3521, 9), // duplicate day: last wins
+    c('2026-11-17', NaN, 3520, 3490, 3510),
+    c('2026-11-16', 3500, 3480, 3490, 3510), // high < low
+    c('2026-02-30', 3500, 3520, 3490, 3510), // impossible date
+    c('17 Nov', 3500, 3520, 3490, 3510),
+    c('2026-11-15', 3500, 3520, 3490, 3510, -1),
+    null as unknown as Candle,
+  ];
+  const out = normalizeCandles(rows);
+  assert.deepEqual(out.map((x) => x.time), ['2026-11-18', '2026-11-19']);
+  assert.equal(out[1].close, 3521);
+  assert.equal(out[1].volume, 9);
+});
+
+test('prepareCandles tolerates unsorted / duplicated input (chart library would throw)', () => {
+  const out = prepareCandles([G[1], G[0], G[1]], 3540, '2026-11-20T09:00:00Z', 3530);
+  assert.deepEqual(out.map((x) => x.time), ['2026-11-18', '2026-11-19', '2026-11-20']);
+  for (let i = 1; i < out.length; i++) assert.ok(out[i - 1].time < out[i].time);
+});
+
+test('isSaneUsd', () => {
+  assert.equal(isSaneUsd(3500), true);
+  for (const v of [null, NaN, 0, 5, 1e6, '3500']) assert.equal(isSaneUsd(v), false);
+});
+
+test('toDisplay drops rows the converter turns non-finite', () => {
+  const d = toDisplay(SAMPLE, (usd) => (usd === 100 ? NaN : usd));
+  assert.deepEqual(d.map((x) => x.time), ['2026-11-18', '2026-11-19']);
 });
 
 test('toDisplay converts every price and keeps high/low as extremes', () => {

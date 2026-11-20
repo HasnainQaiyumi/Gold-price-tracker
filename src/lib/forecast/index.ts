@@ -43,6 +43,15 @@ export const SCORE_WARMUP = 60;
 export const MIN_BARS = 120;
 /** Horizons with fewer scorecard samples than this are left out of the scorecard. */
 export const MIN_SCORECARD_SAMPLES = 30;
+/** ...and horizons with fewer than this many NON-overlapping periods (samples / h) are left out too.
+ * The checks overlap (one per past day), so e.g. 350 checks of a 90-day range are only ~4 separate
+ * quarters: a hit rate from that is mostly noise (sd ~ 23 points) and would be shown as if it meant something. */
+export const MIN_SCORECARD_PERIODS = 5;
+/** Last date of the data the fixed constants (GARCH_ALPHA/BETA, PRIOR_*, PRIOR_STRENGTH) were chosen on.
+ * Scorecard checks whose outcome falls on or before this date are in-sample for those constants; only
+ * later checks are fully out-of-sample. (A nested test, constants re-chosen on the first 450 days only,
+ * moved the in-sample hit rates by <= 1.5 points, so the effect is small; see the research report.) */
+export const CONSTANTS_FITTED_THROUGH = '2026-11-19';
 export const LIKELY_PROB = 0.68;
 export const EXTREME_PROB = 0.95;
 /** Share of up-months in gold's monthly prices 1971-2026 (52.3% of 637 months). Used as the 30-day
@@ -54,7 +63,9 @@ export const MODEL_NAME = 'GARCH(1,1) volatility + conformal calibration';
 
 /** How the scorecard counts: one check per past day, so 30- and 90-day windows overlap. */
 export const SCORECARD_NOTE =
-  'Each past day is one check, so long-horizon windows overlap: a 30-day score of n checks contains only about n/30 truly separate periods.';
+  'Each past day is one check, so long-horizon windows overlap: a 30-day score of n checks contains only about n/30 truly separate periods. ' +
+  'The score averages different market moods: in our tests the ranges were too narrow during the 2025 rally (the 30-day "most likely" range held about 63 times in 100) ' +
+  'and too wide during the 2026 sell-off (about 73 in 100). The model settings were chosen on these same past prices, so treat the score as a rough check, not proof.';
 
 const DIRECTION_NONE: DirectionView = {
   label: 'none',
@@ -147,11 +158,13 @@ export function horizonVariance(v1: number, lr: number, h: number, a = GARCH_ALP
 
 // ----------------------------- calibration -----------------------------
 
-/** Split-conformal quantile: the ceil((n+1)p)-th smallest of `sorted` (clamped to the largest). */
+/** Split-conformal quantile: the ceil((n+1)p)-th smallest of `sorted` (clamped to the largest).
+ * The 1e-9 guard stops float error from bumping an exact integer rank up by one
+ * (e.g. 75 * 0.68 = 51.00000000000001 in IEEE doubles, which would give rank 52 instead of 51). */
 export function conformalQuantile(sorted: ArrayLike<number>, p: number): number {
   const n = sorted.length;
   if (n === 0) return NaN;
-  const k = Math.min(n, Math.ceil((n + 1) * p));
+  const k = Math.max(1, Math.min(n, Math.ceil((n + 1) * p - 1e-9)));
   return sorted[k - 1];
 }
 
@@ -218,14 +231,16 @@ export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
   return { sd, q68, q95, outcome, known };
 }
 
-/** Walk-forward hit rates over origins whose own prefix had >= MIN_BARS bars (overlapping windows). */
+/** Walk-forward hit rates over origins whose own prefix had >= MIN_BARS bars (overlapping windows).
+ * Origins with a zero-width range (sd = 0, e.g. a stale feed repeating one price) are not counted:
+ * a range of width 0 "containing" an unchanged price is not a meaningful hit. */
 export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
   let samples = 0;
   let likely = 0;
   let extreme = 0;
   for (let t = MIN_BARS - 1; t < s.p.length; t++) {
     const k = wf.outcome[t];
-    if (k < 0 || !Number.isFinite(wf.sd[t])) continue;
+    if (k < 0 || !(wf.sd[t] > 0) || !Number.isFinite(wf.sd[t]) || !Number.isFinite(wf.q68[t]) || !Number.isFinite(wf.q95[t])) continue;
     const z = Math.abs(Math.log(s.p[k] / s.p[t]));
     samples++;
     if (z <= wf.q68[t] * wf.sd[t]) likely++;
@@ -258,7 +273,9 @@ function rangeAt(now: number, sd: number, q68: number, q95: number, h: number): 
  * @param bars daily closes, any order; invalid rows are ignored, duplicates keep the last one
  * @param spotUsd live spot (USD/oz); the ranges are centred on it. Falls back to the last close.
  * @param horizons calendar-day horizons, integers 1..365
- * @returns null when fewer than MIN_BARS valid bars are available
+ * @returns null when fewer than MIN_BARS valid bars are available, when the recent prices show no
+ *   variation at all (zero volatility: a stale feed), or when the input is so extreme that a range
+ *   would not be a finite number
  */
 export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizons: number[] = [7, 30, 90]): ForecastResult | null {
   if (!Array.isArray(bars)) return null;
@@ -269,15 +286,18 @@ export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizon
   const hs = [...new Set((horizons ?? []).filter((h) => Number.isInteger(h) && h >= 1 && h <= 365))];
   const vol = garchPath(s);
   const last = n - 1;
-  if (!Number.isFinite(vol.v1[last])) return null;
+  // v1 = 0 means every return so far was exactly 0: a zero-width range would be meaningless.
+  if (!Number.isFinite(vol.v1[last]) || !(vol.v1[last] > 0)) return null;
 
   const ranges: RangeForecast[] = [];
   const scorecard: Scorecard[] = [];
   for (const h of hs) {
     const wf = walkForward(s, vol, h);
-    ranges.push(rangeAt(now, wf.sd[last], wf.q68[last], wf.q95[last], h));
+    const r = rangeAt(now, wf.sd[last], wf.q68[last], wf.q95[last], h);
+    if (![r.likelyLow, r.likelyHigh, r.extremeLow, r.extremeHigh].every((x) => Number.isFinite(x))) return null;
+    ranges.push(r);
     const sc = scorecardFor(s, wf, h);
-    if (sc.samples >= MIN_SCORECARD_SAMPLES) scorecard.push(sc);
+    if (sc.samples >= MIN_SCORECARD_SAMPLES && sc.samples >= MIN_SCORECARD_PERIODS * h) scorecard.push(sc);
   }
   return {
     model: MODEL_NAME,

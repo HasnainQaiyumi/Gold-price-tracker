@@ -1,15 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  _resetNetworkState,
+  backoffMs,
   cleanText,
   decodeEntities,
   dollarMove,
   DXY_CONST,
   dxyProxy,
+  fetchDollarMove,
+  fetchNews,
   googleNewsUrl,
+  isRateLimited,
+  MIN_RETRY_GAP_MS,
   mergeHeadlines,
   minusDays,
   MAX_TITLE,
+  NEWS_REFRESH_MS,
   parseFrankfurter,
   parsePubDate,
   parseRss2Json,
@@ -200,4 +207,178 @@ test('minusDays crosses month and year boundaries', () => {
   assert.equal(minusDays('2026-03-01', 1), '2026-02-28');
   assert.equal(minusDays('2026-01-03', 7), '2025-12-27');
   assert.equal(minusDays('2026-11-20', -3), '2026-11-23');
+});
+
+// ---------------------------------------------------------------- review regressions: text
+
+test('cleanText decodes double-encoded entities once more, but still strips revealed tags', () => {
+  assert.equal(cleanText('Gold &amp;#39;rallies&amp;#39; &amp;amp; more'), "Gold 'rallies' & more");
+  assert.equal(cleanText('&amp;lt;script&amp;gt;x&amp;lt;/script&amp;gt;Gold'), 'Gold');
+  assert.equal(cleanText('&amp;lt;img src=x onerror=alert(1)&amp;gt;Gold'), 'Gold');
+});
+
+test('cleanText drops invisible characters and never splits an emoji when cutting', () => {
+  assert.equal(cleanText('Go­ld⁠ up﻿ 1%⁦'), 'Go ld up 1%');
+  assert.equal(cleanText('bad \ud800 surrogate'), 'bad surrogate');
+  for (const max of [20, 21]) {
+    const out = cleanText('😀'.repeat(100), max);
+    assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(out), `lone high surrogate at max=${max}`);
+    assert.ok(out.length <= max);
+  }
+});
+
+test('parseRss2Json drops items older than ~2 days (the UI says "last 2 days")', () => {
+  const r = parseRss2Json({ status: 'ok', items: [
+    { title: 'Gold news from 47 hours ago', pubDate: '2026-11-18 13:00:00' },
+    { title: 'Gold news from 60 hours ago', pubDate: '2026-11-18 00:00:00' },
+  ] }, NOW);
+  assert.deepEqual(r.items.map((x) => x.title), ['Gold news from 47 hours ago']);
+});
+
+test('parseRss2Json survives hostile shapes', () => {
+  for (const bad of [[], 0, true, { status: 'ok', items: 'x' }, { status: 'ok', items: [1, 'a', [], { title: {} }, { title: ['x'] }] }]) {
+    const r = parseRss2Json(bad, NOW);
+    assert.ok(Array.isArray(r.items));
+    assert.equal(r.items.length, 0);
+  }
+  const r = parseRss2Json({ status: 'ok', items: [{ title: 'Gold is fine here today', link: { href: 'javascript:1' }, pubDate: 12 }] }, NOW);
+  assert.equal(r.items[0].link, null);
+  assert.equal(r.items[0].publishedAt, null);
+});
+
+// ---------------------------------------------------------------- review regressions: network politeness
+
+test('backoffMs and isRateLimited', () => {
+  assert.equal(backoffMs(0), 0);
+  assert.equal(backoffMs(1), 60_000);
+  assert.equal(backoffMs(3), 240_000);
+  assert.equal(backoffMs(50), NEWS_REFRESH_MS);
+  assert.ok(isRateLimited('You are converting new feeds in a very short period'));
+  assert.ok(isRateLimited('HTTP 429'));
+  assert.ok(!isRateLimited('HTTP 500'));
+});
+
+type FakeResponse = { ok: boolean; status: number; json: () => Promise<unknown> };
+function stubFetch(handler: (url: string) => FakeResponse | Promise<FakeResponse>) {
+  const calls: string[] = [];
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => {
+    calls.push(String(url));
+    return handler(String(url));
+  }) as unknown as typeof fetch;
+  return { calls, restore: () => (globalThis.fetch = orig) };
+}
+function withClock<T>(fn: (set: (ms: number) => void) => Promise<T>): Promise<T> {
+  const orig = Date.now;
+  let t = orig();
+  Date.now = () => t;
+  return fn((ms) => (t = ms)).finally(() => (Date.now = orig));
+}
+const okJson = (body: unknown): FakeResponse => ({ ok: true, status: 200, json: async () => body });
+const feed = (n: number, at: number) => ({
+  status: 'ok',
+  items: Array.from({ length: n }, (_, i) => ({ title: `Gold headline number ${i} here`, pubDate: new Date(at - i * 60_000).toISOString() })),
+});
+
+test('fetchNews: rate-limit error stops after one request and backs off; no request storm', async () => {
+  _resetNetworkState();
+  const f = stubFetch(() => okJson({ status: 'error', message: 'You are converting new feeds in a very short period' }));
+  try {
+    await withClock(async (set) => {
+      const t0 = Date.parse('2026-11-20T12:00:00Z');
+      set(t0);
+      await assert.rejects(fetchNews());
+      assert.equal(f.calls.length, 1, 'second feed not tried after a rate-limit answer');
+      // Tab switches / timers during backoff do not touch the network.
+      for (let i = 0; i < 5; i++) await assert.rejects(fetchNews());
+      set(t0 + 5_000);
+      await assert.rejects(fetchNews(true), Error, 'retry click within the minimum gap is refused');
+      assert.equal(f.calls.length, 1);
+      // A retry click after the minimum gap goes through.
+      set(t0 + MIN_RETRY_GAP_MS + 1);
+      await assert.rejects(fetchNews(true));
+      assert.equal(f.calls.length, 2);
+      // Not forced: waits out the (now 2-minute) backoff.
+      set(t0 + MIN_RETRY_GAP_MS + 60_000);
+      await assert.rejects(fetchNews());
+      assert.equal(f.calls.length, 2);
+      set(t0 + MIN_RETRY_GAP_MS + 1 + 120_001);
+      await assert.rejects(fetchNews());
+      assert.equal(f.calls.length, 3);
+    });
+  } finally {
+    f.restore();
+    _resetNetworkState();
+  }
+});
+
+test('fetchNews: single flight, cache, stale copy on failure, second feed only to top up', async () => {
+  _resetNetworkState();
+  let mode: 'few' | 'fail' = 'few';
+  const f = stubFetch(() => (mode === 'few' ? okJson(feed(5, Date.now())) : { ok: false, status: 503, json: async () => ({}) }));
+  try {
+    await withClock(async (set) => {
+      const t0 = Date.parse('2026-11-20T12:00:00Z');
+      set(t0);
+      const [a, b] = await Promise.all([fetchNews(), fetchNews()]);
+      assert.equal(f.calls.length, 2, 'one load (both feeds, because the first had < 12 items) shared by two callers');
+      assert.equal(b.items.length, 5, 'same titles from both feeds are deduplicated');
+      assert.equal(b.stale, false);
+      await fetchNews();
+      assert.equal(f.calls.length, 2, 'served from cache');
+      // After the refresh interval the next call refetches; a failure returns the cached copy marked stale.
+      mode = 'fail';
+      set(t0 + NEWS_REFRESH_MS);
+      const s = await fetchNews();
+      assert.equal(s.stale, true);
+      assert.equal(s.fetchedAt, t0);
+      assert.equal(s.items.length, 5);
+      const n = f.calls.length;
+      await fetchNews();
+      assert.equal(f.calls.length, n, 'backing off: cached copy, no request');
+    });
+  } finally {
+    f.restore();
+    _resetNetworkState();
+  }
+});
+
+test('fetchNews: a timer firing exactly every 15 minutes always refreshes', async () => {
+  _resetNetworkState();
+  const f = stubFetch(() => okJson(feed(20, Date.now())));
+  try {
+    await withClock(async (set) => {
+      const t0 = Date.parse('2026-11-20T12:00:00Z');
+      set(t0 + 8_000); // first load finished 8 s after the timer started
+      await fetchNews();
+      set(t0 + NEWS_REFRESH_MS); // first tick
+      await fetchNews();
+      assert.equal(f.calls.length, 2, 'one feed per load (20 items is enough), and the tick refreshed');
+    });
+  } finally {
+    f.restore();
+    _resetNetworkState();
+  }
+});
+
+test('fetchDollarMove: two requests, cached, single flight', async () => {
+  _resetNetworkState();
+  const rates = { CAD: 1.43, CHF: 0.84261, EUR: 0.90975, GBP: 0.76038, JPY: 159.97, SEK: 10.141 };
+  const f = stubFetch((url) => {
+    const u = new URL(url);
+    assert.equal(u.origin, 'https://api.frankfurter.dev');
+    return url.includes('/latest') ? okJson({ base: 'USD', date: '2026-11-19', rates }) : okJson({ base: 'USD', date: '2026-11-12', rates: { ...rates, EUR: 0.9 } });
+  });
+  try {
+    const [a, b] = await Promise.all([fetchDollarMove(), fetchDollarMove()]);
+    assert.equal(a, b);
+    assert.equal(f.calls.length, 2);
+    assert.ok(f.calls[1].includes('/v1/2026-11-12?'));
+    assert.ok(a.pct > 0, 'more euros per dollar = stronger dollar = index up');
+    await fetchDollarMove();
+    assert.equal(f.calls.length, 2);
+  } finally {
+    f.restore();
+    _resetNetworkState();
+  }
 });

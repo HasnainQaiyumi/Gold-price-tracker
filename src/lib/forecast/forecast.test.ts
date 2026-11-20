@@ -11,6 +11,7 @@ import {
   GARCH_BETA,
   horizonVariance,
   MIN_BARS,
+  MIN_SCORECARD_PERIODS,
   PRIOR_Q68,
   PRIOR_Q95,
   scorecardFor,
@@ -67,6 +68,13 @@ test('conformalQuantile uses the ceil((n+1)p)-th order statistic, clamped', () =
   assert.equal(conformalQuantile(xs, 0.68), 8);
   assert.equal(conformalQuantile(xs, 0.95), 10);
   assert.ok(Number.isNaN(conformalQuantile([], 0.5)));
+  // exact integer ranks must not be bumped by float error: 75 * 0.68 = 51.00000000000001 in doubles
+  const ys = Array.from({ length: 74 }, (_, i) => i + 1);
+  assert.equal(conformalQuantile(ys, 0.68), 51);
+  const zs = Array.from({ length: 299 }, (_, i) => i + 1);
+  assert.equal(conformalQuantile(zs, 0.68), 204); // 300 * 0.68 = 204 exactly
+  assert.equal(conformalQuantile(zs, 0.95), 285); // 300 * 0.95 = 285 exactly
+  assert.equal(conformalQuantile([5], 0.01), 5);
 });
 
 test('shrink: prior with no data, data-dominated with many effective samples', () => {
@@ -154,18 +162,35 @@ test('NO LEAKAGE: forecasts made at t are identical when data after t is altered
         assert.ok(Object.is(a.sd[i], b.sd[i]) && Object.is(a.q68[i], b.q68[i]) && Object.is(a.q95[i], b.q95[i]), `t=${t} h=${h} i=${i}`);
       }
     }
-    // and the public API at t (prefix) equals the walk-forward row at t
-    const f = forecastGold(altered.slice(0, t + 1), REAL[t].usd)!;
-    const f0 = forecastGold(REAL.slice(0, t + 1), REAL[t].usd)!;
-    assert.deepEqual(f.ranges, f0.ranges);
-    const wf30 = walkForward(s, vol, 30);
-    const r30 = f.ranges.find((r) => r.days === 30)!;
-    assert.ok(Math.abs(r30.likelyHigh - REAL[t].usd * Math.exp(wf30.q68[t] * wf30.sd[t])) < 1e-9);
+    // and the public API on the prefix 0..t equals the full-series walk-forward row at t, for every
+    // horizon and both bands (so the live forecast is exactly what the scorecard replays)
+    const f = forecastGold(REAL.slice(0, t + 1), REAL[t].usd)!;
+    assert.ok(f);
+    for (const h of [7, 30, 90]) {
+      const wf = walkForward(s, vol, h);
+      const r = f.ranges.find((x) => x.days === h)!;
+      const P = REAL[t].usd;
+      assert.ok(Math.abs(r.likelyHigh / (P * Math.exp(wf.q68[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} likely`);
+      assert.ok(Math.abs(r.extremeLow / (P * Math.exp(-wf.q95[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} extreme`);
+    }
+  }
+});
+
+test('NO LEAKAGE: a score enters the calibration only once its outcome bar has arrived', () => {
+  const s = toSeries(REAL);
+  const vol = garchPath(s);
+  for (const h of [7, 30]) {
+    const wf = walkForward(s, vol, h);
+    // known[t] must equal the number of origins j >= 60 with j + h <= t (gap-free series)
+    for (const t of [59, 60 + h - 1, 60 + h, 400, 719]) assert.equal(wf.known[t], Math.max(0, t - h - 60 + 1), `h=${h} t=${t}`);
   }
 });
 
 // ------------------------- calibration regression (real data) -------------------------
 
+// NOTE: this is a REGRESSION test, not out-of-sample proof. The constants (GARCH a/b, priors, k) were
+// chosen on this same fixture, so these rates are in-sample for those constants. A nested check
+// (constants re-chosen on the first 450 days only) moved them by <= 1.5 points (research report, 5b).
 test('real-data calibration: walk-forward coverage near nominal at 7 and 30 days', () => {
   const f = forecastGold(REAL, REAL[REAL.length - 1].usd)!;
   const by = Object.fromEntries(f.scorecard.map((s) => [s.horizonDays, s]));
@@ -215,6 +240,54 @@ test('returns null for short or unusable input; works from MIN_BARS', () => {
   assert.deepEqual(f!.scorecard.map((s) => s.horizonDays), []);
   // early on the multipliers are the prior
   assert.ok(Math.abs(Math.log(f!.ranges[2].likelyHigh / 3000) / Math.log(f!.ranges[2].extremeHigh / 3000) - PRIOR_Q68 / PRIOR_Q95) < 1e-12);
+});
+
+test('stale feed: flat prices give null, not a zero-width range scored as "100% right"', () => {
+  const flat = Array.from({ length: 300 }, (_, i) => ({ date: isoDay(t0 + i * DAY), usd: 3000 }));
+  assert.equal(forecastGold(flat, 3000), null);
+  // a flat stretch inside real data: origins with sd = 0 are not counted as scorecard hits
+  const s = toSeries([...flat.slice(0, 200), ...REAL.slice(200).map((b, i) => ({ date: isoDay(t0 + (200 + i) * DAY), usd: b.usd }))]);
+  const vol = garchPath(s);
+  const wf = walkForward(s, vol, 7);
+  const sc = scorecardFor(s, wf, 7);
+  let counted = 0;
+  for (let t = MIN_BARS - 1; t < s.p.length; t++) if (wf.outcome[t] >= 0 && wf.sd[t] > 0) counted++;
+  assert.equal(sc.samples, counted);
+  assert.ok(counted < s.p.length - MIN_BARS - 7 + 1, 'zero-sd origins must be excluded');
+});
+
+test('scorecard: a horizon needs >= MIN_SCORECARD_PERIODS non-overlapping periods to be listed', () => {
+  const f = forecastGold(REAL, 3600, [7, 30, 90, 180, 365])!;
+  for (const sc of f.scorecard) assert.ok(sc.samples / sc.horizonDays >= MIN_SCORECARD_PERIODS, `h=${sc.horizonDays}`);
+  const listed = f.scorecard.map((x) => x.horizonDays);
+  assert.deepEqual(listed, [7, 30, 90]); // 180d: ~2.3 periods, 365d: < 1 period -> left out
+  assert.equal(f.ranges.length, 5); // ranges are still given
+  // 450 bars: 90d has ~331 overlapping checks = 3.7 quarters -> left out; 30d kept
+  const g = forecastGold(REAL.slice(0, 450), 3000)!;
+  assert.deepEqual(g.scorecard.map((x) => x.horizonDays), [7, 30]);
+});
+
+test('every output is a finite number on hostile-but-valid inputs (or the result is null)', () => {
+  const cases: DailyBar[][] = [
+    REAL.map((b, i) => (i === 600 ? { ...b, usd: b.usd * 100 } : b)), // one bad tick
+    REAL.map((b, i) => (i === 719 ? { ...b, usd: b.usd / 100 } : b)), // bad last tick
+    REAL.map((b) => ({ ...b, usd: b.usd * 1e-300 })), // tiny scale
+    REAL.map((b) => ({ ...b, usd: b.usd * 1e300 })), // huge scale
+    REAL.map((b, i) => ({ ...b, usd: i % 2 ? 1e150 : 1e-150 })), // absurd oscillation
+    REAL.filter((b) => ![0, 6].includes(new Date(`${b.date}T00:00:00Z`).getUTCDay())), // weekday-only feed
+    [...REAL.slice(0, 360), ...REAL.slice(360).map((b) => ({ ...b, date: isoDay(Date.parse(`${b.date}T00:00:00Z`) + 365 * DAY) }))], // 1-year hole
+  ];
+  for (const [i, bars] of cases.entries()) {
+    const f = forecastGold(bars, bars[bars.length - 1].usd, [1, 7, 30, 90, 365]);
+    if (f === null) continue;
+    const nums: number[] = [f.dailyVolPct, f.direction.probabilityUp];
+    for (const r of f.ranges) nums.push(r.now, r.median, r.likelyLow, r.likelyHigh, r.extremeLow, r.extremeHigh);
+    for (const s of f.scorecard) nums.push(s.samples, s.likelyHitRate, s.extremeHitRate);
+    assert.ok(nums.every((x) => Number.isFinite(x)), `case ${i}`);
+    for (const r of f.ranges) assert.ok(r.extremeLow <= r.likelyLow && r.likelyLow <= r.likelyHigh && r.likelyHigh <= r.extremeHigh, `case ${i}`);
+  }
+  // the scale cases must still produce a forecast (scale-invariant engine)
+  assert.ok(forecastGold(cases[2], cases[2][719].usd) && forecastGold(cases[3], cases[3][719].usd));
 });
 
 test('invalid spot falls back to the last close; horizons are sanitised', () => {
