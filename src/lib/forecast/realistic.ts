@@ -1,15 +1,15 @@
 /**
  * "Most realistic prediction": one line, not a low/normal/high set.
  * The engine's back-tests (55 years of monthly data, 2 years daily) found no reliable way to call
- * the direction, so the most realistic single estimate for every horizon is today's price
- * (the median of the calibrated forecast). Uncertainty is kept as one plain "typical miss" figure.
+ * the direction, so the most realistic single estimate is today's price grown at gold's long-run
+ * average rate (the centre of the calibrated forecast). Uncertainty is kept as one plain "typical miss" figure.
  * The track record replays the same method at past dates and compares it with what really happened.
  */
-import { forecastGold } from './index';
+import { forecastGold, LONG_RUN_GROWTH_PER_YEAR } from './index';
 import type { DailyBar } from './types';
 
-/** Gold's average growth since August 1971 (monthly data to Oct 2026: 43 -> 4105 USD/oz). Context only. */
-export const LONG_RUN_GROWTH_PCT_PER_YEAR = 8.6;
+/** Gold's average growth since August 1971 (monthly data to Oct 2026: 43 -> 4105 USD/oz). */
+export const LONG_RUN_GROWTH_PCT_PER_YEAR = Math.round(LONG_RUN_GROWTH_PER_YEAR * 1000) / 10;
 
 export interface RealisticPoint {
   days: number;
