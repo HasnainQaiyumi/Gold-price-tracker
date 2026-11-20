@@ -4,7 +4,8 @@
  * An AI model may write the paragraph, but only from the facts and headlines given, and its output
  * is rejected if it contains numbers that are not in those inputs. Otherwise the rule-based text is used.
  */
-import type { Explanation } from './explain';
+import type { Explanation, ThemeId } from './explain';
+import { LESSONS, type Driver, type Explainer } from './teach';
 import { cleanText, NEWS_MAX_AGE_HOURS, parsePubDate, safeUrl, splitTitle, type Headline } from './news';
 
 export const BRIEF_INTERVAL_HOURS = 4;
@@ -17,6 +18,7 @@ export interface Brief {
   source: 'ai' | 'rules';
   model: string | null;
   headlines: Headline[];
+  explainer: Explainer | null; // the teacher-style mid-page explainer
 }
 
 const firstSentence = (s: string) => (s.match(/^.*?[.!?](\s|$)/)?.[0] ?? s).trim();
@@ -61,19 +63,47 @@ export function factsText(e: Explanation): string {
     .join('\n');
 }
 
+/** The AI only summarises the NEWS (short version + one summary per detected topic). Teaching text is fixed (teach.ts). */
 export function buildPrompt(e: Explanation, headlines: Headline[], nowIso: string): { system: string; user: string } {
+  const topics = e.why.slice(0, 3).filter((w) => !w.fromData);
   const system = [
-    'You explain gold prices to an ordinary adult in Dubai who has never studied finance. Be simple, warm and clear, never childish.',
-    'Write ONE paragraph of 140 to 210 words. Use short sentences (under 18 words). Use everyday words.',
-    'Follow this order. (1) What gold did: use the numbers given, including the price in AED per gram. (2) Why: for each of the 1 to 3 main reasons in the headlines, say what happened, then explain in plain words why that pushes gold up or down. Explain any term the first time, for example "the Fed, America\'s central bank, which sets US interest rates". Attribute news to reports ("reports say", "news outlets say"). (3) What could happen next: name only upcoming events that appear in the headlines; say what could push gold up and what could push it down. If no event is named, say people are watching US interest rates and the dollar.',
-    'Strict rules: use ONLY facts and numbers from the FACTS and HEADLINES given; never invent numbers, dates, names or events; never say which way gold will go; no advice to buy or sell; do not copy headlines word for word; avoid jargon (no "hawkish", "dovish", "yields", "basis points", "risk-off", "XAU"); no lists, no markdown, no links, no greeting.',
+    'You summarise gold news for an ordinary adult in Dubai who has never studied finance. Talk like a friendly teacher: simple, warm, clear, never childish.',
+    'Return JSON only, exactly this shape: {"summary": string, "topics": {"<topicId>": string}}.',
+    '"summary": 2 or 3 short sentences (30 to 70 words) saying what gold did and the main reasons in the news.',
+    'For each topic id given, write 1 or 2 short sentences (15 to 55 words) saying what the news reports about that topic, attributed ("Reports say...", "News outlets say..."). Explain any term in plain words, for example "the Fed, America\'s central bank".',
+    'Strict rules: use ONLY facts and numbers from FACTS and HEADLINES; never invent numbers, dates, names or events; never say which way gold will go; no advice to buy or sell; do not copy headlines word for word; short sentences (under 18 words); avoid jargon (no "hawkish", "dovish", "yields", "basis points", "risk-off", "XAU"); no markdown, no links.',
   ].join(' ');
   const hl = headlines
     .slice(0, 12)
     .map((h) => `- ${h.title}${h.source ? ` (${h.source}` : ''}${h.publishedAt ? `${h.source ? ', ' : ' ('}${h.publishedAt.slice(0, 16).replace('T', ' ')} UTC)` : h.source ? ')' : ''}`)
     .join('\n');
-  const user = `Current time: ${nowIso}\n\nFACTS (the only numbers you may use):\n${factsText(e)}\n\nHEADLINES from the last 2 days:\n${hl || '(none available)'}\n\nWrite the paragraph now.`;
+  const tp = topics.map((w) => `- ${w.id}: ${LESSONS[w.id].name}. Headlines on it: ${w.headlines.slice(0, 3).map((h) => `"${h.title}"`).join('; ') || '(see list)'}`).join('\n');
+  const user = `Current time: ${nowIso}\n\nFACTS (the only numbers you may use):\n${factsText(e)}\n\nTOPICS to summarise (use these ids as keys):\n${tp || '(none)'}\n\nHEADLINES from the last 2 days:\n${hl || '(none available)'}\n\nReturn the JSON now.`;
   return { system, user };
+}
+
+export interface AiNews {
+  summary: string | null;
+  whatHappened: Partial<Record<ThemeId, string>>;
+}
+
+/** Parses + validates the AI JSON; every piece must pass the same grounding/simplicity checks, or it is dropped. */
+export function parseAiNews(raw: unknown, allowed: string, topicIds: ThemeId[]): AiNews {
+  const out: AiNews = { summary: null, whatHappened: {} };
+  if (typeof raw !== 'string') return out;
+  let j: { summary?: unknown; topics?: Record<string, unknown> };
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    j = JSON.parse(m ? m[0] : raw);
+  } catch {
+    return out;
+  }
+  out.summary = validateAiText(j.summary, allowed, 25, 80);
+  for (const id of topicIds) {
+    const v = validateAiText(j.topics?.[id], allowed, 10, 65);
+    if (v) out.whatHappened[id] = v;
+  }
+  return out;
 }
 
 /** Second AI pass: an independent fact-check of the paragraph against the same sources. */
@@ -103,13 +133,18 @@ const decimals = (s: string) => (s.includes('.') ? s.split('.')[1].length : 0);
 
 /** Returns the cleaned paragraph, or null if it breaks the rules (then the rule-based text is used). */
 export function validateAiParagraph(raw: unknown, allowed: string): string | null {
+  return validateAiText(raw, allowed, 90, 240);
+}
+
+/** Shared checks: length, simple sentences, no jargon/links/advice, every number grounded in `allowed`. */
+export function validateAiText(raw: unknown, allowed: string, minWords: number, maxWords: number): string | null {
   if (typeof raw !== 'string') return null;
   const text = raw.replace(/\s+/g, ' ').trim().replace(/^["“]|["”]$/g, '');
   const words = text.split(' ').length;
-  if (words < 90 || words > 240) return null;
+  if (words < minWords || words > maxWords) return null;
   const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
   const lens = sentences.map((x) => x.split(' ').length);
-  if (Math.max(...lens) > 32 || lens.reduce((a, b) => a + b, 0) / lens.length > 19) return null; // keep it simple
+  if (Math.max(...lens) > 32 || lens.reduce((a, b) => a + b, 0) / lens.length > 20) return null; // keep it simple
   if (/\b(hawkish|dovish|yields?|basis points|bps|risk-off|risk-on|XAU|tailwinds?|headwinds?)\b/i.test(text)) return null;
   if (/https?:|www\.|[*#`<>]|\n/.test(text)) return null;
   if (/\b(you should|we recommend|buy now|sell now|guaranteed)\b/i.test(text)) return null;
@@ -145,7 +180,47 @@ export function sanitizeBrief(raw: unknown): Brief | null {
     source: o.source === 'ai' ? 'ai' : 'rules',
     model: typeof o.model === 'string' ? cleanText(o.model, 60) : null,
     headlines,
+    explainer: sanitizeExplainer(o.explainer),
   };
+}
+
+const txt = (v: unknown, max = 1200) => cleanText(v, max);
+const sanitizeHeadlines = (v: unknown, n: number): Headline[] =>
+  Array.isArray(v)
+    ? v.slice(0, n).flatMap((h) => {
+        const r = (h ?? {}) as Record<string, unknown>;
+        const title = cleanText(r.title);
+        const iso = typeof r.publishedAt === 'string' && !Number.isNaN(Date.parse(r.publishedAt)) ? r.publishedAt : null;
+        return title ? [{ title, source: cleanText(r.source, 60), link: safeUrl(r.link), publishedAt: iso }] : [];
+      })
+    : [];
+
+/** brief.json is fetched by the browser: re-validate every field; icons and names come from our own library. */
+export function sanitizeExplainer(raw: unknown): Explainer | null {
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null;
+  if (!o) return null;
+  const summary = txt(o.summary), happened = txt(o.happened, 2000), forYou = txt(o.forYou, 2000);
+  if (summary.length < 20) return null;
+  const drivers = Array.isArray(o.drivers)
+    ? o.drivers.slice(0, 3).flatMap((d): Driver[] => {
+        const r = (d ?? {}) as Record<string, unknown>;
+        const id = typeof r.id === 'string' && r.id in LESSONS ? (r.id as ThemeId) : null;
+        if (!id) return [];
+        const L = LESSONS[id];
+        const direction: Driver['direction'] = r.direction === 'up' || r.direction === 'down' ? r.direction : 'unclear';
+        const steps = Array.isArray(r.steps) ? r.steps.slice(0, 8).map((x) => txt(x, 300)).filter(Boolean) : [];
+        return [{ id, icon: L.icon, name: L.name, direction, whatHappened: txt(r.whatHappened, 800), steps: steps.length ? steps : direction === 'up' ? L.up : L.down, analogy: txt(r.analogy, 800) || L.analogy, note: txt(r.note, 400) || null, headlines: sanitizeHeadlines(r.headlines, 2) }];
+      })
+    : [];
+  const watch = Array.isArray(o.watch)
+    ? o.watch.slice(0, 3).flatMap((w) => {
+        const r = (w ?? {}) as Record<string, unknown>;
+        const event = txt(r.event, 200), ifUp = txt(r.ifUp, 300), ifDown = txt(r.ifDown, 300);
+        return event && ifUp && ifDown ? [{ event, ifUp, ifDown }] : [];
+      })
+    : [];
+  const l = (o.lesson ?? {}) as Record<string, unknown>;
+  return { summary, happened, drivers, watch, lesson: { title: txt(l.title, 200), body: txt(l.body, 3000) }, forYou };
 }
 
 /** Direct Google News RSS (server side only; browsers are blocked by CORS). Pure XML parse. */

@@ -17,6 +17,7 @@ import { smaSeries } from '../../src/lib/goldAnalytics';
 import { usdOzToAedPerG } from '../../src/lib/goldPricing';
 import { marketStatus } from '../../src/lib/market';
 import { BRIEF_MAX_AGE_HOURS, sanitizeBrief } from '../../src/lib/brief';
+import type { Explainer } from '../../src/lib/teach';
 import { dailyDue, dubaiClock, evaluateServerAlerts, inQuietHours, sanitizeConfig, sanitizeState, settingsFromEnv, type AlertEvent, type Facts } from '../../src/lib/serverAlerts';
 
 const SITE_URL = 'https://hasnainqaiyumi.github.io/Gold-price-tracker/';
@@ -52,11 +53,11 @@ async function sendEmail(ctx: AlertContext): Promise<boolean> {
   return true;
 }
 
-async function latestBrief(): Promise<string | null> {
+async function latestBrief(): Promise<{ paragraph: string; explainer: Explainer | null } | null> {
   try {
     const r = await fetch(`${SITE_URL}data/brief.json`, { signal: AbortSignal.timeout(15000) });
     const b = r.ok ? sanitizeBrief(await r.json()) : null;
-    return b && Date.now() - Date.parse(b.generatedAt) < BRIEF_MAX_AGE_HOURS * 3600e3 ? b.paragraph : null;
+    return b && Date.now() - Date.parse(b.generatedAt) < BRIEF_MAX_AGE_HOURS * 3600e3 ? { paragraph: b.paragraph, explainer: b.explainer } : null;
   } catch {
     return null;
   }
@@ -136,7 +137,7 @@ async function main() {
   }
 
   const brief = await latestBrief();
-  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief };
+  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief: brief?.paragraph ?? null, explainer: brief?.explainer ?? null };
 
   let failed = false;
   if (alertEvents.length) {

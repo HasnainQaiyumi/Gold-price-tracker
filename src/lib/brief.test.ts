@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPrompt, buildVerifyPrompt, factsText, parseGoogleNewsRss, parseVerdict, ruleParagraph, sanitizeBrief, validateAiParagraph } from './brief';
+import { buildPrompt, buildVerifyPrompt, factsText, parseAiNews, parseGoogleNewsRss, parseVerdict, ruleParagraph, sanitizeBrief, sanitizeExplainer, validateAiParagraph } from './brief';
+import { buildExplainer, LESSONS } from './teach';
+import { explainerHtml, whatsappExplainer } from './alertMessages';
 import { explain, priceFacts } from './explain';
 import type { DailyBar } from './forecast/types';
 
@@ -27,7 +29,7 @@ test('rule paragraph is one paragraph of sensible length, with the move and a ca
 
 test('prompt carries facts and headlines, and forbids invented numbers', () => {
   const { system, user } = buildPrompt(e, headlines, '2026-11-20T10:00:00Z');
-  assert.match(system, /ONE paragraph of 140 to 210 words/);
+  assert.match(system, /Return JSON only/);
   assert.match(system, /never invent numbers/);
   assert.match(system, /short sentences/);
   assert.match(user, /Fed signals rates/);
@@ -114,4 +116,49 @@ test('polish: dedupe + Fed explanation', async () => {
   assert.equal((t.match(/That fits\./g) ?? []).length, 1);
   assert.match(t, /the Fed \(America's central bank, which sets US interest rates\) cuts/);
   assert.equal((t.match(/America's central bank/g) ?? []).length, 1);
+});
+
+test('AI news JSON: valid pieces kept, invented numbers or unknown topics dropped', () => {
+  const allowed = factsText(e) + ' 2.4%';
+  const raw = JSON.stringify({
+    summary: 'Gold fell this week. Reports say the Fed, America\'s central bank, may keep interest rates high. A stronger dollar also weighed on the price, according to news outlets.',
+    topics: { fed: 'Reports say the Fed may keep US interest rates high for longer. That makes savings pay more than gold does.', dollar: 'News outlets say the dollar rose 9.9% this week.', bogus: 'x' },
+  });
+  const ids = e.why.map((w) => w.id);
+  const r = parseAiNews('Here you go: ' + raw, allowed, ids);
+  assert.ok(r.summary && r.summary.startsWith('Gold fell this week.'));
+  if (ids.includes('fed')) assert.ok(r.whatHappened.fed);
+  assert.equal(r.whatHappened.dollar, undefined, 'invented 9.9% rejected');
+  assert.deepEqual(parseAiNews('not json', allowed, ids), { summary: null, whatHappened: {} });
+});
+
+test('explainer: teaching chains come from the fixed library, with a note when the usual effect did not happen', () => {
+  const x = buildExplainer(e, null, 0);
+  assert.ok(x.summary.length > 20 && x.happened.length > 20);
+  for (const d of x.drivers) {
+    assert.deepEqual(d.steps, d.direction === 'up' ? LESSONS[d.id].up : d.direction === 'down' ? LESSONS[d.id].down : d.steps);
+    assert.equal(d.analogy, LESSONS[d.id].analogy);
+  }
+  assert.ok(x.lesson.title && x.lesson.body);
+  assert.match(x.forYou, /fixed amount every month/);
+  const forced = buildExplainer({ ...e, mood: 'down', why: [{ id: 'riskMood', label: 'Stock market mood', lean: 'up', text: 't', headlines: [], mentions: 1, fromData: false }] }, null);
+  assert.match(forced.drivers[0].note ?? '', /sell gold to raise cash/);
+});
+
+test('explainer survives brief.json round-trip; tampered fields are cleaned', () => {
+  const x = buildExplainer(e, null, 0);
+  const back = sanitizeExplainer(JSON.parse(JSON.stringify(x)));
+  assert.deepEqual(back?.drivers.map((d) => d.id), x.drivers.map((d) => d.id));
+  const bad = sanitizeExplainer({ ...x, summary: '<script>alert(1)</script> Gold went down a lot this week.', drivers: [{ id: 'notATopic' }, { ...x.drivers[0], icon: '<img>' }] });
+  assert.ok(bad && !bad.summary.includes('<script>'));
+  assert.equal(bad!.drivers.length, 1);
+  assert.equal(bad!.drivers[0].icon, LESSONS[x.drivers[0].id].icon, 'icon comes from our library, not the file');
+});
+
+test('WhatsApp explainer stays within its length cap; email HTML escapes content', () => {
+  const x = buildExplainer(e, null, 0);
+  assert.ok(whatsappExplainer(x, 900).length <= 900);
+  const html = explainerHtml({ ...x, summary: '<b>bold</b> summary text here' }, true);
+  assert.ok(html.includes('&lt;b&gt;bold'));
+  assert.ok(html.includes('Today'));
 });

@@ -1,5 +1,6 @@
 /** Renders alert emails (HTML + text), WhatsApp text and the chart SVG. Pure, no I/O. */
 import type { AlertEvent } from './serverAlerts';
+import type { Explainer } from './teach';
 
 export interface AlertContext {
   events: AlertEvent[];
@@ -11,6 +12,7 @@ export interface AlertContext {
   siteUrl: string;
   configUrl: string;
   brief?: string | null; // the latest "Why gold is moving" paragraph, if fresh
+  explainer?: Explainer | null; // the full teacher-style explainer (used in the morning briefing)
 }
 
 const TOLA_G = 11.6638;
@@ -42,7 +44,7 @@ export function describe(e: AlertEvent, price24: number): { title: string; line:
         ? { emoji: '↗️', title: 'Crossed above its long-term average', line: `Gold (${p}) moved above its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning up. It is not a guarantee.` }
         : { emoji: '↘️', title: 'Crossed below its long-term average', line: `Gold (${p}) moved below its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning down. It is not a guarantee.` };
     case 'daily':
-      return { emoji: '☀️', title: 'Your morning gold briefing', line: `24K gold is ${p} this morning.` };
+      return { emoji: '☀️', title: 'Good morning! Your gold briefing', line: `24K gold is ${p} this morning.` };
     case 'test':
       return { emoji: '✅', title: 'Test alert: everything works', line: `Your gold alerts are set up correctly. Gold is ${p} right now.` };
   }
@@ -71,23 +73,50 @@ export function shortBrief(text: string, maxWords = 75): string {
   return out.join(' ');
 }
 
+export const WHATSAPP_MAX_CHARS = 1500; // CallMeBot sends the text inside a URL; keep it safely short
+
+const dirBadge = (d: 'up' | 'down' | 'unclear') => (d === 'up' ? '▲ pushing gold up' : d === 'down' ? '▼ pushing gold down' : 'direction unclear');
+
+/** Condensed explainer for WhatsApp (phone-sized). */
+export function whatsappExplainer(x: Explainer, maxChars = 900): string {
+  const summary = x.summary.replace(/\s*Below, step by step, is how each one reaches the gold price\.?/, '');
+  const lines: string[] = ['📌 *The short version*', summary];
+  const d0 = x.drivers[0];
+  if (d0) {
+    lines.push('', '🔍 *Why it moved*');
+    for (const d of x.drivers) lines.push(`${d.icon} *${d.name}* (${dirBadge(d.direction)}${d.note ? ', but not this time' : ''})`);
+    lines.push('', `⚙️ *How it works: ${d0.name}*`, d0.steps.join(' → '));
+    if (d0.note) lines.push(`_But this time:_ ${d0.note}`);
+  }
+  if (x.watch[0]) lines.push('', `👀 *Watch next:* ${x.watch[0].event}`, `▲ ${x.watch[0].ifUp}`, `▼ ${x.watch[0].ifDown}`);
+  let out = lines.join('\n');
+  if (out.length > maxChars) out = out.slice(0, maxChars - 1).replace(/\s+\S*$/, '') + '…';
+  return out;
+}
+
 export function renderWhatsApp(ctx: AlertContext): string {
   const chg = ctx.prevClose24 ? (ctx.price24 / ctx.prevClose24 - 1) * 100 : null;
-  const lines = ctx.events.map((e) => {
-    const d = describe(e, ctx.price24);
-    return `${d.emoji} *${d.title}*\n${d.line}`;
-  });
+  const morningOnly = ctx.events.every((e) => e.kind === 'daily');
+  const lines = morningOnly
+    ? []
+    : ctx.events.map((e) => {
+        const d = describe(e, ctx.price24);
+        return `${d.emoji} *${d.title}*\n${d.line}`;
+      });
   return [
-    `🟡 *GOLD ALERT*`,
+    morningOnly ? `☀️ *GOOD MORNING · GOLD BRIEFING*` : `🟡 *GOLD ALERT*`,
     `*AED ${aed(ctx.price24)}/g* (24K)${chg !== null ? `  ${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today` : ''}`,
     '',
     ...lines,
-    ...(ctx.brief ? ['', `📰 *Why gold is moving*`, shortBrief(ctx.brief)] : []),
+    ...(ctx.explainer ? ['', whatsappExplainer(ctx.explainer, ctx.events.some((e) => e.kind === 'daily') ? 900 : 450)] : ctx.brief ? ['', `📰 *Why gold is moving*`, shortBrief(ctx.brief)] : []),
     '',
     `22K: AED ${aed(ctx.price24 * (22 / 24))}/g · Tola 24K: AED ${aed(ctx.price24 * TOLA_G, 0)}`,
     `🕒 ${dubaiTime(ctx.quoteAt)}`,
-    `Open: ${ctx.siteUrl}`,
-  ].join('\n');
+    `Full explanation: ${ctx.siteUrl}`,
+  ]
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .slice(0, WHATSAPP_MAX_CHARS);
 }
 
 /** Line chart of the last ~30 days with target lines, sized for 2x displays (rendered at 560x220 in email). */
@@ -134,6 +163,40 @@ export function chartSvg(closes: number[], targets: AlertContext['targets']): st
 </svg>`;
 }
 
+const H = (t: string) => `<div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;color:#fbf7ef;font-weight:600;margin:26px 0 8px">${esc(t)}</div>`;
+const P = (t: string) => `<div style="font-size:15px;line-height:1.75;color:#e8e1d2">${esc(t)}</div>`;
+
+/** The full teacher-style explainer as email-safe HTML (tables + inline styles). */
+export function explainerHtml(x: Explainer, full: boolean): string {
+  const drivers = x.drivers
+    .map((d) => {
+      const color = d.direction === 'up' ? '#6fcf97' : d.direction === 'down' ? '#ef6b6b' : '#a39b8a';
+      const steps = (full ? d.steps : [])
+        .map(
+          (st, i) =>
+            `<tr><td valign="top" style="width:30px;padding:0 0 8px"><div style="width:22px;height:22px;line-height:22px;border-radius:11px;background:#2a2213;border:1px solid #6b5420;color:#f0cf72;font-size:11px;font-weight:700;text-align:center">${i + 1}</div></td><td style="padding:2px 0 8px;font-size:14px;line-height:1.55;color:${i === d.steps.length - 1 ? '#f0cf72' : '#d8d0bf'};${i === d.steps.length - 1 ? 'font-weight:700' : ''}">${esc(st)}</td></tr>`
+        )
+        .join('');
+      return `<div style="margin-top:12px;padding:16px 18px;background:#0d0c09;border:1px solid #2a261d;border-radius:16px">
+<div style="font-size:15px;font-weight:700;color:#fbf7ef">${d.icon} ${esc(d.name)} <span style="display:inline-block;margin-left:6px;padding:2px 9px;border-radius:999px;font-size:11px;color:${color};background:${color}1f;border:1px solid ${color}55">${esc(dirBadge(d.direction))}</span></div>
+<div style="font-size:14px;line-height:1.65;color:#e8e1d2;margin-top:8px"><span style="color:#a39b8a">In the news: </span>${esc(d.whatHappened)}</div>
+${full ? `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#7d7667;margin:14px 0 8px">How it reaches the gold price</div><table role="presentation" cellpadding="0" cellspacing="0" width="100%">${steps}</table>` : ''}
+${d.note ? `<div style="margin-top:8px;padding:9px 12px;border-radius:10px;background:#2a2312;border:1px solid #5c4a1e;font-size:13px;line-height:1.6;color:#f0dca4"><b>But this time:</b> ${esc(d.note)}</div>` : ''}
+${full ? `<div style="margin-top:10px;font-size:13px;line-height:1.65;color:#cfc7b6"><b style="color:#e8e1d2">💡 Think of it like this:</b> <i>${esc(d.analogy)}</i></div>` : ''}
+</div>`;
+    })
+    .join('');
+  const watch = x.watch
+    .map((w) => `<div style="margin-top:10px;padding:12px 16px;background:#0d0c09;border:1px solid #2a261d;border-radius:14px"><div style="font-size:14px;font-weight:700;color:#fbf7ef">👀 ${esc(w.event)}</div><div style="font-size:13px;line-height:1.6;color:#6fcf97;margin-top:6px">▲ ${esc(w.ifUp)}</div><div style="font-size:13px;line-height:1.6;color:#ef6b6b">▼ ${esc(w.ifDown)}</div></div>`)
+    .join('');
+  return `<div style="margin-top:24px;padding:18px 20px;border-radius:16px;border:1px solid #5c4a1e;background:#1b170e"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#d9a93f;font-weight:700">The short version</div><div style="font-size:16px;line-height:1.7;color:#fbf7ef;margin-top:8px">${esc(x.summary)}</div></div>
+${full && x.happened ? H('What happened to gold') + P(x.happened) : ''}
+${drivers ? H('Why it happened, step by step') + drivers : ''}
+${full && watch ? H('What to watch next') + watch : ''}
+${full && x.lesson.title ? `<div style="margin-top:22px;padding:18px 20px;background:#0d0c09;border:1px solid #2a261d;border-radius:16px"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#7d7667;font-weight:700">📚 Today's lesson</div><div style="font-family:Georgia,'Times New Roman',serif;font-size:18px;color:#f0cf72;font-weight:600;margin-top:4px">${esc(x.lesson.title)}</div><div style="font-size:15px;line-height:1.75;color:#e8e1d2;margin-top:8px">${esc(x.lesson.body)}</div></div>` : ''}
+${full && x.forYou ? H('What this means for you') + P(x.forYou) : ''}`;
+}
+
 export function renderEmailHtml(ctx: AlertContext): string {
   const first = describe(ctx.events[0], ctx.price24);
   const chg = ctx.prevClose24 ? (ctx.price24 / ctx.prevClose24 - 1) * 100 : null;
@@ -141,6 +204,7 @@ export function renderEmailHtml(ctx: AlertContext): string {
   const cell = (label: string, value: string) =>
     `<td style="padding:14px 10px;background:#0d0c09;border-radius:12px;text-align:center;width:33%"><div style="font-size:11px;color:#a39b8a;letter-spacing:.06em;text-transform:uppercase">${esc(label)}</div><div style="font-size:17px;color:#f4efe6;font-weight:700;margin-top:4px">${esc(value)}</div></td>`;
   const items = ctx.events
+    .filter((e) => e.kind !== 'daily')
     .map((e) => {
       const d = describe(e, ctx.price24);
       return `<tr><td style="padding:12px 0;border-top:1px solid #2a261d"><div style="font-size:15px;color:#fbf7ef;font-weight:700">${d.emoji} ${esc(d.title)}</div><div style="font-size:14px;color:#d8d0bf;line-height:1.5;margin-top:3px">${esc(d.line)}</div></td></tr>`;
@@ -163,8 +227,8 @@ export function renderEmailHtml(ctx: AlertContext): string {
 ${cell('22K per gram', `AED ${aed(ctx.price24 * (22 / 24))}`)}${cell('24K per tola', `AED ${aed(ctx.price24 * TOLA_G, 0)}`)}${cell('24K per ounce', `AED ${aed(ctx.price24 * OZ_G, 0)}`)}
 </tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">${items}</table>
-${ctx.brief ? `<div style="margin-top:18px;padding:16px 18px;background:#0d0c09;border:1px solid #2a261d;border-radius:14px"><div style="font-size:12px;color:#d9a93f;font-weight:700;letter-spacing:.06em;text-transform:uppercase">📰 Why gold is moving</div><div style="font-size:14px;line-height:1.7;color:#e8e1d2;margin-top:8px">${esc(ctx.brief)}</div></div>` : ''}
-<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="border-radius:12px;background:#d9a93f"><a href="${esc(ctx.siteUrl)}" style="display:inline-block;padding:13px 22px;color:#1a1405;font-weight:800;font-size:14px;text-decoration:none">Open the Gold app →</a></td></tr></table>
+${ctx.explainer ? explainerHtml(ctx.explainer, ctx.events.some((e) => e.kind === 'daily')) : ctx.brief ? `<div style="margin-top:18px;padding:16px 18px;background:#0d0c09;border:1px solid #2a261d;border-radius:14px"><div style="font-size:12px;color:#d9a93f;font-weight:700;letter-spacing:.06em;text-transform:uppercase">📰 Why gold is moving</div><div style="font-size:14px;line-height:1.7;color:#e8e1d2;margin-top:8px">${esc(ctx.brief)}</div></div>` : ''}
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="border-radius:12px;background:#d9a93f"><a href="${esc(ctx.siteUrl)}" style="display:inline-block;padding:13px 22px;color:#1a1405;font-weight:800;font-size:14px;text-decoration:none">Open the full Gold app →</a></td></tr></table>
 </td></tr>
 <tr><td style="padding:16px 8px;font-size:11px;line-height:1.6;color:#7d7667">Spot price of pure gold; shops add making charges and a premium. Not financial advice.<br>Change or stop alerts: <a href="${esc(ctx.configUrl)}" style="color:#d9a93f">edit your alert settings</a>.</td></tr>
 </table></td></tr></table></body></html>`;
