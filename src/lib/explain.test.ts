@@ -112,11 +112,12 @@ test('direction hints: inflation is two-sided', () => {
 
 test('no hint when the wording is not clear, weak fallback only from explicit gold move + link word', () => {
   const m = classifyHeadline('Fed officials meet next week').find((x) => x.id === 'fed')!;
-  assert.deepEqual([m.up, m.down], [0, 0]);
+  assert.deepEqual([m.up, m.down, m.linked], [0, 0, null]);
+  // The weak fallback only records that the headline links the topic to a gold move. It is not a direction.
   const f = classifyHeadline('Gold rises ahead of Fed meeting').find((x) => x.id === 'fed')!;
-  assert.deepEqual([f.up, f.down], [0.5, 0]);
+  assert.deepEqual([f.up, f.down, f.linked], [0, 0, 'up']);
   const c = classifyHeadline('Gold rises despite Fed comments').find((x) => x.id === 'fed')!;
-  assert.deepEqual([c.up, c.down], [0, 0], 'contrast word: no inference');
+  assert.deepEqual([c.up, c.down, c.linked], [0, 0, null], 'contrast word: no inference');
 });
 
 test('gold move in a headline: first verb after gold, not across a clause', () => {
@@ -191,7 +192,7 @@ test('priceFacts: moves, averages, 52-week range; spot overrides the last close'
   close(g.high52, 1398);
   assert.equal(priceFacts(null), null);
   assert.equal(priceFacts([]), null);
-  assert.equal(priceFacts(mkSeries(30, () => 100)).avg200, null);
+  assert.equal(priceFacts(mkSeries(30, () => 100))!.avg200, null);
 });
 
 test('priceFacts on the real PAXG fixture gives sane numbers', () => {
@@ -226,9 +227,10 @@ const facts = (o: Partial<PriceFacts>): PriceFacts => ({
 });
 
 test('headline one-liner for up / down / flat / missing', () => {
-  assert.equal(headlineLine(facts({ weekPct: -2.1 })).text, 'Gold is down 2.1% this week.');
-  assert.equal(headlineLine(facts({ weekPct: 1.26 })).text, 'Gold is up 1.3% this week.');
-  assert.equal(headlineLine(facts({ weekPct: 0.12 })).text, 'Gold is about flat this week.');
+  // "Past week" (last 7 days), not "this week": on a Monday a calendar week would be misleading.
+  assert.equal(headlineLine(facts({ weekPct: -2.1 })).text, 'Gold is down 2.1% over the past week.');
+  assert.equal(headlineLine(facts({ weekPct: 1.26 })).text, 'Gold is up 1.3% over the past week.');
+  assert.equal(headlineLine(facts({ weekPct: 0.12 })).text, 'Gold is about flat over the past week.');
   assert.equal(headlineLine(facts({ weekPct: 0.12 })).mood, 'flat');
   assert.equal(headlineLine(facts({ weekPct: null, todayPct: -0.8 })).text, 'Gold is down 0.8% today.');
   assert.equal(headlineLine(null).mood, 'unknown');
@@ -271,7 +273,7 @@ test('"Why" cites real headlines and says whether the topic fits the move', () =
 test('theme that goes against the move is called out, not hidden', () => {
   const ex = explain({ facts: facts({ twoDayPct: -1.5 }), headlines: [h('Gold steady as rate cut hopes grow')], nowMs: NOW });
   assert.equal(ex.why[0].id, 'fed');
-  assert.match(ex.why[0].text, /But gold still went down lately, so other things mattered more\./);
+  assert.match(ex.why[0].text, /But gold still went down lately, so other things probably mattered more\./);
   const flat = explain({ facts: facts({ twoDayPct: 0.1 }), headlines: [h('Gold steady as rate cut hopes grow')], nowMs: NOW });
   assert.doesNotMatch(flat.why[0].text, /fits|other things/);
 });
@@ -298,7 +300,7 @@ const dm = (pct: number): DollarMove => ({ fromDate: '2026-11-12', toDate: '2026
 test('dollar fact sentence and data-based dollar reason', () => {
   assert.equal(
     dollarSentence(dm(0.8)),
-    'The US dollar is 0.8% stronger than a week earlier against other big currencies (12 Nov to 19 Nov, from European Central Bank rates). A stronger dollar usually weighs on gold.'
+    'The US dollar is 0.8% stronger than a week earlier against other big currencies (12 Nov to 19 Nov, from European Central Bank rates). A stronger dollar usually pushes gold down.'
   );
   assert.match(dollarSentence(dm(-0.5))!, /0\.5% weaker .* usually helps gold\./);
   assert.match(dollarSentence(dm(0.05))!, /almost unchanged/);
@@ -339,4 +341,85 @@ test('no price history: explanation still renders safely', () => {
   assert.deepEqual(ex.happened, []);
   assert.equal(ex.why[0].id, 'dollar');
   assert.doesNotMatch(ex.why[0].text, /fits|other things/);
+});
+
+test('at or near the one-year low says so plainly', () => {
+  const at = explain({ facts: facts({ fromHighPct: -30, fromLowPct: 0 }), headlines: null, nowMs: NOW });
+  assert.equal(at.happened[2], "This is the lowest price of the past year. It is 30.0% below the year's highest.");
+  const near = explain({ facts: facts({ fromHighPct: -30, fromLowPct: 0.6 }), headlines: null, nowMs: NOW });
+  assert.match(near.happened[2], /^It is very close to its lowest price of the past year, and 30\.0% below/);
+  assert.ok(at.nextUp.some((s) => /one-year low/.test(s)) && at.nextDown.some((s) => /one-year low/.test(s)));
+});
+
+// ---------------------------------------------------------------- review regressions
+
+test('a topic only next to a gold move is never given a made-up direction or cause', () => {
+  const ex = explain({ facts: facts({ twoDayPct: 1 }), headlines: [h('Gold rises ahead of Fed meeting')], nowMs: NOW });
+  const w = ex.why.find((x) => x.id === 'fed')!;
+  assert.equal(w.lean, 'unclear');
+  assert.doesNotMatch(w.text, /rate cuts|lower interest rates|fits with/, 'must not claim the news talks about rate cuts');
+  assert.match(w.text, /does not clearly point one way\. Some headlines mention it next to gold going up, but they do not say how/);
+  const [t] = detectThemes([h('Gold rises ahead of Fed meeting')], NOW);
+  assert.deepEqual([t.lean, t.linked, t.mentions], ['unclear', 'up', 1]);
+});
+
+test('mixed topics say so; unclear topics do not invent "signs both ways"', () => {
+  const ex = explain({ facts: facts({}), headlines: [h('Gold rises as tensions flare'), h('Ceasefire hopes cap gold', 3)], nowMs: NOW });
+  const w = ex.why.find((x) => x.id === 'geopolitics')!;
+  assert.equal(w.lean, 'mixed');
+  assert.match(w.text, /Some headlines point one way and some the other\./);
+  assert.doesNotMatch(THEME_TEXT.geopolitics.unclear + THEME_TEXT.trade.unclear + THEME_TEXT.riskMood.unclear, /both ways/);
+});
+
+test('trade wars and trade tensions are trade, not war', () => {
+  const ids = (t: string) => classifyHeadline(t).map((m) => m.id);
+  assert.deepEqual(ids('Gold climbs as trade war escalates'), ['trade']);
+  assert.deepEqual(ids('Gold steady amid trade tensions'), ['trade']);
+  assert.ok(ids('Gold gains as tariff war heats up').includes('trade'));
+  assert.ok(!ids('Gold gains as tariff war heats up').includes('geopolitics'));
+  assert.equal(lean('Gold jumps as war in Middle East widens', 'geopolitics'), 'up');
+});
+
+test('"no rate cut" and doubts about cuts are bad for gold, not good', () => {
+  assert.equal(lean('Fed signals no rate cut in December, gold slips', 'fed'), 'down');
+  assert.equal(lean('Doubts over December rate cut weigh on gold', 'fed'), 'down');
+  assert.equal(lean('Fed official argues against a rate cut', 'fed'), 'down');
+  assert.equal(lean('Gold climbs as rate cut hopes grow', 'fed'), 'up', 'unchanged');
+});
+
+test('each news topic reports how many headlines it came from', () => {
+  const items = [h('Gold falls as dollar firms'), h('Dollar rallies to two-week high'), h('Gold price today: what to know')];
+  const ex = explain({ facts: facts({}), headlines: items, nowMs: NOW });
+  assert.equal(ex.headlineCount, 3);
+  assert.equal(ex.why[0].id, 'dollar');
+  assert.equal(ex.why[0].mentions, 2);
+  assert.equal(explain({ facts: null, headlines: null, nowMs: NOW }).headlineCount, 0);
+});
+
+test('news about the dollar is shown next to the measured dollar move', () => {
+  const ex = explain({ facts: facts({}), headlines: [h('Gold gains as dollar weakens')], dollar: dm(0.6), nowMs: NOW });
+  const w = ex.why.find((x) => x.id === 'dollar')!;
+  assert.equal(w.fromData, false);
+  assert.match(w.text, /Measured currency data: the dollar is 0\.6% stronger than a week earlier\./);
+  const tiny = explain({ facts: facts({}), headlines: [h('Gold gains as dollar weakens')], dollar: dm(0.05), nowMs: NOW });
+  assert.doesNotMatch(tiny.why[0].text, /Measured currency data/);
+});
+
+test('priceFacts tolerates unsorted and duplicate-date input', () => {
+  const s = mkSeries(400, (i) => 1000 + i);
+  const shuffled = [...s.slice(200), ...s.slice(0, 200)];
+  const dup = [...s, { date: s[s.length - 1].date, usd: 1500 }];
+  assert.deepEqual(priceFacts(shuffled), priceFacts(s));
+  close(priceFacts(dup)!.last, 1500);
+  close(priceFacts(dup)!.todayPct, (1500 / 1398 - 1) * 100);
+  assert.equal(priceFacts([{ date: 'bad', usd: 1 }, { date: '2026-01-01', usd: -5 }] as DailyBar[]), null);
+});
+
+test('user-facing text avoids harder words', () => {
+  const all = [
+    ...Object.values(THEME_TEXT).flatMap((t) => Object.values(t)),
+    ...explain({ facts: facts({ fromHighPct: -30, fromLowPct: 0.5 }), headlines: [h('Gold falls as dollar firms')], dollar: dm(1), nowMs: NOW }).nextUp,
+    dollarSentence(dm(1))!,
+  ].join(' ');
+  assert.doesNotMatch(all, /\b(weighs?|attractive|bargain|monetary|geopolitic\w*|accumulat\w*)\b/i);
 });

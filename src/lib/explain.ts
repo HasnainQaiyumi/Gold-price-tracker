@@ -70,9 +70,12 @@ export function windowMean(series: DailyBar[], days: number): number | null {
  */
 export function priceFacts(series: DailyBar[] | null, spotUsd?: number | null): PriceFacts | null {
   if (!series) return null;
-  const clean = series.filter((b) => b && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && isNum(b.usd));
-  if (!clean.length) return null;
-  const s = clean.slice();
+  const valid = series.filter((b) => b && typeof b.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && isNum(b.usd));
+  if (!valid.length) return null;
+  // Defensive: oldest first, one bar per date (the later one wins), so every window/lookback below is valid.
+  const byDate = new Map<string, DailyBar>();
+  for (const b of valid) byDate.set(b.date, b);
+  const s = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   if (isNum(spotUsd)) s[s.length - 1] = { date: s[s.length - 1].date, usd: spotUsd };
   const last = s[s.length - 1];
 
@@ -168,7 +171,7 @@ export const THEMES: ThemeDef[] = [
     label: 'Interest rates (the Fed)',
     keys: [rx('\\b(?:fed|feds|federal reserve|fomc|powell|rate[- ]cuts?|rate[- ]hikes?|interest[- ]rates?|monetary policy|(?:treasury |bond |real )?yields?|policymakers?)\\b')],
     hints: [
-      { re: rx('\\b(?:(?:rate[- ]?)?cut (?:hopes|bets|expectations|odds|bets) (?:fade|fades|faded|dim|dims|dimmed|wane|wanes|waned|recede|recedes|receded|cool|cools|cooled|ebb|ebbs|shrink|shrinks|drop|drops|fall|falls|pared|dashed)|fewer (?:rate[- ])?cuts|(?:delays?|delayed|pushes? back (?:on|against)|no rush to|no hurry to|in no hurry to|rules? out|scales? back|pares?)\\b[^.;:]{0,20}?\\b(?:rate[- ])?cuts?)\\b'), lean: 'down' },
+      { re: rx('\\b(?:(?:rate[- ]?)?cut (?:hopes|bets|expectations|odds|bets) (?:fade|fades|faded|dim|dims|dimmed|wane|wanes|waned|recede|recedes|receded|cool|cools|cooled|ebb|ebbs|shrink|shrinks|drop|drops|fall|falls|pared|dashed)|fewer (?:rate[- ])?cuts|no (?:\\w+ )?(?:rate[- ])?cuts?|(?:doubts?|uncertainty|skepticism|scepticism) (?:over|about|on|around) (?:a |the |any )?(?:\\w+ )?(?:rate[- ])?cuts?|(?:against|opposes?|opposed to|rejects?) (?:a |any |more |further )?(?:\\w+ )?(?:rate[- ])?cuts?|(?:delays?|delayed|pushes? back (?:on|against)|no rush to|no hurry to|in no hurry to|rules? out|scales? back|pares?)\\b[^.;:]{0,20}?\\b(?:rate[- ])?cuts?)\\b'), lean: 'down' },
       { re: rx('\\b(?:hawkish\\w*|higher[- ]for[- ]longer|rate[- ]hikes?|hikes? (?:interest )?rates|raises? (?:interest )?rates|tighten\\w*)\\b'), lean: 'down' },
       { re: rx('\\b(?:dovish\\w*|(?:fed|policy|monetary) easing|easing (?:bets|hopes|expectations|cycle|path)|rate[- ]cuts?|cuts? (?:interest )?rates|lower(?:ing)? (?:interest )?rates|policy easing|(?:bets|hopes|expectations|odds) (?:of|for|on) (?:a |an |more |further |another )?(?:fed |rate |december |january |march )?(?:rate )?cuts?)\\b'), lean: 'up' },
       moveHint('(?:treasury |bond |real |us |10-year |u\\.s\\. )?yields?', 'down', 20),
@@ -203,11 +206,11 @@ export const THEMES: ThemeDef[] = [
   {
     id: 'geopolitics',
     label: 'War and world tensions',
-    keys: [rx('\\b(?:wars?|conflicts?|geopolitic\\w*|tensions?|attacks?|missiles?|airstrikes?|military|invasion|sanctions?|ceasefire|truce|peace (?:talks|deal|plan|agreement)|middle east|ukraine|russia|iran|israel|gaza|taiwan|north korea|venezuela|nuclear|escalat\\w*)\\b')],
+    keys: [rx('\\b(?:(?<!trade[- ])(?<!tariff )(?<!price )(?<!currency )wars?|conflicts?|geopolitic\\w*|(?<!trade[- ])(?<!tariff )(?<!price )(?<!currency )tensions?|attacks?|missiles?|airstrikes?|military|invasion|sanctions?|ceasefire|truce|peace (?:talks|deal|plan|agreement)|middle east|ukraine|russia|iran|israel|gaza|taiwan|north korea|venezuela|nuclear)\\b')], // "escalates" alone is only a hint: "trade war escalates" is not a war
     hints: [
       { re: rx('\\b(?:ceasefire|cease-fire|truce|peace (?:deal|talks|plan|agreement|hopes)|de-?escalat\\w*|tensions? (?:ease|eases|eased|easing|cool|cools|cooled|subside|subsides|subsided)|easing tensions)\\b'), lean: 'down' },
       SAFE_HAVEN,
-      { re: rx('\\b(?:escalat\\w*|(?:rising|mounting|heightened|growing) tensions|tensions? (?:rise|rises|rising|rose|mount|mounts|flare|flares|grow|grows|heighten\\w*|intensif\\w*)|wars?|attacks?|missiles?|airstrikes?|invasion|new sanctions)\\b'), lean: 'up' },
+      { re: rx('\\b(?:escalat\\w*|(?:rising|mounting|heightened|growing) tensions|(?<!trade[- ])tensions? (?:rise|rises|rising|rose|mount|mounts|flare|flares|grow|grows|heighten\\w*|intensif\\w*)|(?<!trade[- ])(?<!tariff )(?<!price )(?<!currency )wars?|attacks?|missiles?|airstrikes?|invasion|new sanctions)\\b'), lean: 'up' },
     ],
     weight: 1,
   },
@@ -341,8 +344,13 @@ const CONTRAST = /\b(?:despite|even as|although|though|but|while|yet|however)\b/
 
 export interface ThemeMatch {
   id: ThemeId;
-  up: number; // strength of wording pointing to "helps gold"
-  down: number; // strength of wording pointing to "weighs on gold"
+  up: number; // strength of explicit wording pointing to "helps gold"
+  down: number; // strength of explicit wording pointing to "pushes gold down"
+  /**
+   * Weak signal, only when there is no explicit wording: the headline puts this topic next to a gold move
+   * ("Gold rises ahead of Fed meeting"). It is NOT a direction for the topic and is never shown as one.
+   */
+  linked: Lean | null;
 }
 
 /** Which themes a single headline touches, with direction hints for each. Pure and deterministic. */
@@ -371,11 +379,8 @@ export function classifyHeadline(title: string): ThemeMatch[] {
       }
     }
     // Weak fallback: "Gold rises as <theme>" with no explicit wording -> the headline itself links them.
-    if (up === 0 && down === 0 && move && CAUSAL.test(text) && !CONTRAST.test(text)) {
-      if (move === 'up') up = 0.5;
-      else down = 0.5;
-    }
-    out.push({ id: t.id, up, down });
+    const linked = up === 0 && down === 0 && move && CAUSAL.test(text) && !CONTRAST.test(text) ? move : null;
+    out.push({ id: t.id, up, down, linked });
   }
   return out;
 }
@@ -384,7 +389,10 @@ export interface ThemeHit {
   id: ThemeId;
   label: string;
   score: number;
-  lean: ThemeLean;
+  lean: ThemeLean; // from explicit wording only
+  /** When lean is 'unclear': the gold move most headlines put this topic next to (not a cause), if any. */
+  linked: Lean | null;
+  mentions: number; // how many headlines touch this topic
   headlines: Headline[]; // supporting headlines, most relevant first (max 2)
 }
 
@@ -397,17 +405,19 @@ export function leanOf(up: number, down: number): ThemeLean {
 
 /** Aggregate themes over many headlines; newest headlines count a little more. Sorted by score, then priority. */
 export function detectThemes(items: Headline[], nowMs: number, minScore = 0.7): ThemeHit[] {
-  const acc = new Map<ThemeId, { score: number; up: number; down: number; hl: { h: Headline; hinted: boolean }[] }>();
+  const acc = new Map<ThemeId, { score: number; up: number; down: number; lu: number; ld: number; hl: { h: Headline; hinted: boolean }[] }>();
   for (const h of items) {
     const t = h.publishedAt ? Date.parse(h.publishedAt) : NaN;
     const ageH = Number.isFinite(t) ? (nowMs - t) / 3600_000 : 48;
     const rec = ageH <= 24 ? 1 : 0.7;
     for (const m of classifyHeadline(h.title)) {
       const def = THEMES.find((d) => d.id === m.id)!;
-      const a = acc.get(m.id) ?? { score: 0, up: 0, down: 0, hl: [] };
+      const a = acc.get(m.id) ?? { score: 0, up: 0, down: 0, lu: 0, ld: 0, hl: [] };
       a.score += rec * def.weight;
       a.up += m.up * rec;
       a.down += m.down * rec;
+      if (m.linked === 'up') a.lu += rec;
+      else if (m.linked === 'down') a.ld += rec;
       a.hl.push({ h, hinted: m.up + m.down >= 1 });
       acc.set(m.id, a);
     }
@@ -420,6 +430,8 @@ export function detectThemes(items: Headline[], nowMs: number, minScore = 0.7): 
       label: THEMES.find((d) => d.id === id)!.label,
       score: Math.round(a.score * 100) / 100,
       lean: leanOf(a.up, a.down),
+      linked: a.up + a.down > 0 ? null : a.lu > a.ld ? ('up' as const) : a.ld > a.lu ? ('down' as const) : null,
+      mentions: a.hl.length,
       headlines: a.hl
         .slice()
         .sort((x, y) => Number(y.hinted) - Number(x.hinted) || (y.h.publishedAt ?? '').localeCompare(x.h.publishedAt ?? ''))
@@ -436,7 +448,7 @@ export function detectThemes(items: Headline[], nowMs: number, minScore = 0.7): 
 interface ThemeText {
   base: string; // how this thing usually affects gold
   up: string; // what the headlines say, when they point to "helps gold"
-  down: string; // ... when they point to "weighs on gold"
+  down: string; // ... when they point to "pushes gold down"
   unclear: string; // when wording is mixed or absent
   nextUp: string; // "If ..., gold could rise."
   nextDown: string; // "If ..., gold could fall."
@@ -444,9 +456,9 @@ interface ThemeText {
 
 export const THEME_TEXT: Record<ThemeId, ThemeText> = {
   fed: {
-    base: 'Gold pays no interest. So when interest rates go down, gold looks better next to savings and bonds. When rates stay high, gold looks less attractive.',
+    base: 'Gold pays no interest. So when interest rates go down, gold looks better next to savings and bonds. When rates stay high, gold looks less worth holding.',
     up: 'The news talks about lower interest rates or rate cuts, which usually helps gold.',
-    down: 'The news talks about interest rates staying high, which usually weighs on gold.',
+    down: 'The news talks about interest rates staying high, which usually pushes gold down.',
     unclear: 'The news talks about the Fed and interest rates, but it does not clearly point one way.',
     nextUp: 'If the Fed hints at more rate cuts, gold could rise.',
     nextDown: 'If the Fed says rates will stay high for longer, gold could fall.',
@@ -454,7 +466,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
   inflation: {
     base: 'Inflation means things cost more over time. Some people buy gold to protect their savings from that. But high inflation can also keep interest rates high, which is bad for gold.',
     up: 'The news points to cooler inflation or worries about money losing value, which usually helps gold.',
-    down: 'The news points to hotter inflation, which can keep interest rates high and weigh on gold.',
+    down: 'The news points to hotter inflation, which can keep interest rates high and push gold down.',
     unclear: 'The news mentions inflation, but it does not clearly point one way.',
     nextUp: 'If inflation cools and rate cuts look closer, gold could rise.',
     nextDown: 'If inflation runs hot and keeps interest rates high, gold could fall.',
@@ -462,7 +474,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
   dollar: {
     base: 'Gold is priced in US dollars. When the dollar gets weaker, gold gets cheaper for people using other money, so more of them buy it. When the dollar gets stronger, the opposite happens.',
     up: 'The news says the dollar got weaker, which usually helps gold.',
-    down: 'The news says the dollar got stronger, which usually weighs on gold.',
+    down: 'The news says the dollar got stronger, which usually pushes gold down.',
     unclear: 'The news mentions the dollar, but it does not clearly say which way it moved.',
     nextUp: 'If the US dollar gets weaker, gold could rise.',
     nextDown: 'If the US dollar gets stronger, gold could fall.',
@@ -471,7 +483,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
     base: 'When people are scared about wars or trouble between countries, many buy gold because it feels safe. When things calm down, some of them sell.',
     up: 'The news talks about rising tensions or fighting, which often makes people buy gold.',
     down: 'The news talks about peace talks or calmer tensions, which can make people sell some gold.',
-    unclear: 'The news mentions world tensions, with signs pointing both ways.',
+    unclear: 'The news mentions world tensions, but it does not clearly point one way.',
     nextUp: 'If fighting or tensions get worse, gold could rise.',
     nextDown: 'If peace talks or a ceasefire calm things down, gold could fall.',
   },
@@ -486,7 +498,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
   etfFlows: {
     base: 'Gold funds (called ETFs) let people own gold through the stock market. When money pours in, the funds must buy real gold. When money leaves, they sell.',
     up: 'The news says money is flowing into gold funds, which usually helps the price.',
-    down: 'The news says money is leaving gold funds, which usually weighs on the price.',
+    down: 'The news says money is leaving gold funds, which usually pushes the price down.',
     unclear: 'The news mentions gold funds, without a clear direction.',
     nextUp: 'If more money flows into gold funds, gold could rise.',
     nextDown: 'If investors pull money out of gold funds, gold could fall.',
@@ -494,7 +506,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
   econData: {
     base: 'News about US jobs and the economy changes what people expect from interest rates. Weak numbers usually help gold. Strong numbers usually hurt it.',
     up: 'The news points to a weaker US economy, which usually helps gold.',
-    down: 'The news points to a strong US economy, which usually weighs on gold.',
+    down: 'The news points to a strong US economy, which usually pushes gold down.',
     unclear: 'The news mentions US economic numbers, without a clear direction.',
     nextUp: 'If upcoming US jobs or economy numbers come in weak, gold could rise.',
     nextDown: 'If upcoming US jobs or economy numbers come in strong, gold could fall.',
@@ -503,7 +515,7 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
     base: 'Tariffs are taxes on goods from other countries. Trade fights make people nervous about the economy, and nervous people often buy gold. Trade deals can calm them down.',
     up: 'The news talks about new tariffs or trade fights, which often makes people buy gold.',
     down: 'The news talks about trade deals or tariff relief, which can make people sell some gold.',
-    unclear: 'The news mentions tariffs and trade, with signs pointing both ways.',
+    unclear: 'The news mentions tariffs and trade, but it does not clearly point one way.',
     nextUp: 'If trade fights or new tariffs grow, gold could rise.',
     nextDown: 'If countries agree new trade deals, gold could fall.',
   },
@@ -511,14 +523,14 @@ export const THEME_TEXT: Record<ThemeId, ThemeText> = {
     base: 'When stock markets are scared and falling, many people move money into gold to feel safe. When stocks are doing great, gold can look less exciting.',
     up: 'The news talks about worried or falling markets, which often sends people to gold.',
     down: 'The news talks about confident, rising stock markets, which can pull money away from gold.',
-    unclear: 'The news mentions the stock market mood, with signs pointing both ways.',
+    unclear: 'The news mentions the stock market mood, but it does not clearly point one way.',
     nextUp: 'If stock markets get scared and fall, gold could rise.',
     nextDown: 'If stocks keep climbing and investors feel brave, gold could fall.',
   },
   profitTaking: {
-    base: 'After gold goes up a lot, some traders sell to lock in their winnings. That selling can push the price down for a while, even if nothing else changed.',
+    base: 'After gold goes up a lot, some traders sell to lock in their winnings. That selling can pull the price down for a bit, even if nothing else changed.',
     up: 'The news says buyers are stepping in after a dip, which can help the price bounce.',
-    down: 'The news says traders are selling to lock in their profits, which can push the price down for a while.',
+    down: 'The news says traders are selling to lock in their profits.',
     unclear: 'The news talks about traders and chart levels, without a clear direction.',
     nextUp: 'If buyers step in after the dip, gold could rise.',
     nextDown: 'If more traders sell to lock in profits, gold could fall.',
@@ -549,6 +561,7 @@ export interface WhyItem {
   lean: ThemeLean;
   text: string; // plain explanation: what the news says + how this usually affects gold + fit with the actual move
   headlines: Headline[]; // cited headlines (empty for the data-based dollar item)
+  mentions: number; // how many of the recent headlines touch this topic (0 for the data-based item)
   fromData: boolean; // true = based on measured currency data, not headlines
 }
 
@@ -563,6 +576,7 @@ export interface Explanation {
   nextNote: string;
   dollarFact: string | null;
   newsAvailable: boolean;
+  headlineCount: number; // how many headlines the "why" section looked at (0 if none / unavailable)
 }
 
 export interface ExplainInput {
@@ -589,8 +603,8 @@ export function fmtDay(ymd: string): string {
 export function headlineLine(f: PriceFacts | null): { text: string; mood: Mood } {
   if (!f) return { text: 'Waiting for gold price history.', mood: 'unknown' };
   if (f.weekPct !== null) {
-    if (Math.abs(f.weekPct) < FLAT_WEEK) return { text: 'Gold is about flat this week.', mood: 'flat' };
-    return { text: `Gold is ${upDown(f.weekPct)} ${pct1(f.weekPct)} this week.`, mood: f.weekPct > 0 ? 'up' : 'down' };
+    if (Math.abs(f.weekPct) < FLAT_WEEK) return { text: 'Gold is about flat over the past week.', mood: 'flat' };
+    return { text: `Gold is ${upDown(f.weekPct)} ${pct1(f.weekPct)} over the past week.`, mood: f.weekPct > 0 ? 'up' : 'down' };
   }
   if (f.todayPct !== null) {
     if (Math.abs(f.todayPct) < FLAT_DAY) return { text: 'Gold is about flat today.', mood: 'flat' };
@@ -632,8 +646,11 @@ export function happenedSentences(f: PriceFacts | null, fmtPrice?: (usd: number)
 
   if (f.fromHighPct !== null && f.high52 !== null) {
     const hi = fmtPrice ? ` (${fmtPrice(f.high52)})` : '';
+    const lo = fmtPrice && f.low52 !== null ? ` (${fmtPrice(f.low52)})` : '';
     if (f.fromHighPct >= -0.05) out.push(`This is the highest price of the past year${hi}.`);
     else if (f.fromHighPct > -1) out.push(`It is very close to its highest price of the past year${hi}.`);
+    else if (f.fromLowPct !== null && f.fromLowPct < 0.05) out.push(`This is the lowest price of the past year${lo}. It is ${pct1(f.fromHighPct)} below the year's highest.`);
+    else if (f.fromLowPct !== null && f.fromLowPct < 1) out.push(`It is very close to its lowest price of the past year${lo}, and ${pct1(f.fromHighPct)} below the year's highest.`);
     else if (f.fromHighPct > -5 || f.fromLowPct === null) out.push(`It is ${pct1(f.fromHighPct)} below its highest price of the past year${hi}.`);
     else out.push(`It is ${pct1(f.fromHighPct)} below its highest price of the past year${hi}, and ${pct1(f.fromLowPct)} above its lowest.`);
   }
@@ -653,8 +670,8 @@ function fitSentence(lean: ThemeLean, mood: Mood): string {
   if ((lean !== 'up' && lean !== 'down') || (mood !== 'up' && mood !== 'down')) return '';
   if (lean === mood) return mood === 'up' ? 'That fits with gold going up lately.' : 'That fits with gold going down lately.';
   return mood === 'down'
-    ? 'But gold still went down lately, so other things mattered more.'
-    : 'But gold still went up lately, so other things mattered more.';
+    ? 'But gold still went down lately, so other things probably mattered more.'
+    : 'But gold still went up lately, so other things probably mattered more.';
 }
 
 export function dollarSentence(d: DollarMove | null | undefined): string | null {
@@ -662,7 +679,7 @@ export function dollarSentence(d: DollarMove | null | undefined): string | null 
   const when = `(${fmtDay(d.fromDate)} to ${fmtDay(d.toDate)}, from European Central Bank rates)`;
   if (Math.abs(d.pct) < 0.15) return `The US dollar is almost unchanged from a week earlier against other big currencies ${when}.`;
   return d.pct > 0
-    ? `The US dollar is ${pct1(d.pct)} stronger than a week earlier against other big currencies ${when}. A stronger dollar usually weighs on gold.`
+    ? `The US dollar is ${pct1(d.pct)} stronger than a week earlier against other big currencies ${when}. A stronger dollar usually pushes gold down.`
     : `The US dollar is ${pct1(d.pct)} weaker than a week earlier against other big currencies ${when}. A weaker dollar usually helps gold.`;
 }
 
@@ -675,20 +692,37 @@ export function explain(input: ExplainInput): Explanation {
   const newsAvailable = headlines !== null;
   const themes = headlines ? detectThemes(headlines, nowMs).slice(0, 3) : [];
 
+  const dollarOk = !!dollar && Number.isFinite(dollar.pct);
   const why: WhyItem[] = themes.map((t) => {
     const tx = THEME_TEXT[t.id];
-    const what = t.lean === 'up' ? tx.up : t.lean === 'down' ? tx.down : tx.unclear;
+    // Only explicit wording gives a topic a direction. Otherwise we say plainly that the direction is not clear.
+    const what =
+      t.lean === 'up'
+        ? tx.up
+        : t.lean === 'down'
+          ? tx.down
+          : t.lean === 'mixed'
+            ? `${tx.unclear} Some headlines point one way and some the other.`
+            : t.linked
+              ? `${tx.unclear} Some headlines mention it next to gold going ${t.linked}, but they do not say how it pushed the price.`
+              : tx.unclear;
+    // When the news talks about the dollar and we also measured it, show the measurement next to the words.
+    const measured =
+      t.id === 'dollar' && dollarOk && Math.abs(dollar!.pct) >= 0.15
+        ? `Measured currency data: the dollar is ${pct1(dollar!.pct)} ${dollar!.pct > 0 ? 'stronger' : 'weaker'} than a week earlier.`
+        : '';
     return {
       id: t.id,
       label: t.label,
       lean: t.lean,
-      text: [what, tx.base, fitSentence(t.lean, mood)].filter(Boolean).join(' '),
+      text: [what, tx.base, measured, fitSentence(t.lean, mood)].filter(Boolean).join(' '),
       headlines: t.headlines,
+      mentions: t.mentions,
       fromData: false,
     };
   });
 
-  if (dollar && Number.isFinite(dollar.pct) && Math.abs(dollar.pct) >= DOLLAR_DATA_MIN && !why.some((w) => w.id === 'dollar')) {
+  if (dollar && dollarOk && Math.abs(dollar.pct) >= DOLLAR_DATA_MIN && !why.some((w) => w.id === 'dollar')) {
     const lean: Lean = dollar.pct > 0 ? 'down' : 'up';
     why.push({
       id: 'dollar',
@@ -702,6 +736,7 @@ export function explain(input: ExplainInput): Explanation {
         .filter(Boolean)
         .join(' '),
       headlines: [],
+      mentions: 0,
       fromData: true,
     });
   }
@@ -731,7 +766,7 @@ export function explain(input: ExplainInput): Explanation {
     nextUp.push('If it breaks above its one-year high, more buyers could join in.');
     nextDown.push('Prices near a one-year high can drop fast if many people sell to lock in profits.');
   } else if (facts && facts.fromLowPct !== null && facts.fromLowPct < 2) {
-    nextUp.push('Prices near a one-year low can bounce if bargain hunters step in.');
+    nextUp.push('Prices near a one-year low can bounce if people see gold as cheap and buy.');
     nextDown.push('If it drops below its one-year low, more sellers could join in.');
   }
   const nextNote = ids.length
@@ -749,5 +784,6 @@ export function explain(input: ExplainInput): Explanation {
     nextNote,
     dollarFact: dollarSentence(dollar),
     newsAvailable,
+    headlineCount: headlines ? headlines.length : 0,
   };
 }

@@ -49,13 +49,19 @@ export function cleanText(raw: unknown, max = MAX_TITLE): string {
   if (typeof raw !== 'string') return '';
   let s = raw.length > 20000 ? raw.slice(0, 20000) : raw;
   s = stripTags(s);
+  // Feeds are often double-encoded ("&amp;#39;"), so decode at most twice; strip any tags that decoding revealed.
   s = decodeEntities(s);
+  if (/&(?:#x?[0-9a-f]+|[a-z][a-z0-9]+);/i.test(s)) s = decodeEntities(s);
   s = stripTags(s);
+  // Control chars, soft hyphen, zero-width / bidi / word-joiner / BOM / interlinear annotation characters.
   // eslint-disable-next-line no-control-regex
-  s = s.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, ' ');
+  s = s.replace(/[\u0000-\u001f\u007f-\u009f­​-‏‪-‮⁠-⁤⁦-⁯﻿￹-￻]/g, ' ');
+  // Lone surrogates (broken UTF-16) would render as replacement boxes.
+  s = s.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '');
   s = s.replace(/\s+/g, ' ').trim();
   if (s.length > max) {
-    const cut = s.slice(0, max - 1);
+    let cut = s.slice(0, max - 1);
+    if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1); // never split a surrogate pair
     const sp = cut.lastIndexOf(' ');
     s = `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\-–—]+$/, '')}…`;
   }
@@ -111,6 +117,9 @@ export function splitTitle(title: string): { title: string; source: string } {
 
 const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+/** The UI says "the last 2 days"; one hour of slack for publisher clock skew. */
+export const NEWS_MAX_AGE_HOURS = 49;
+
 export interface NewsParse {
   ok: boolean;
   items: Headline[];
@@ -121,7 +130,7 @@ export interface NewsParse {
  * Parse one rss2json response. Never throws. Items are sanitised, deduplicated, newest first, and anything
  * older than `maxAgeHours` (relative to `nowMs`) or dated in the future (>1h) is dropped.
  */
-export function parseRss2Json(json: unknown, nowMs: number, maxAgeHours = 72): NewsParse {
+export function parseRss2Json(json: unknown, nowMs: number, maxAgeHours = NEWS_MAX_AGE_HOURS): NewsParse {
   if (!json || typeof json !== 'object') return { ok: false, items: [], error: 'empty response' };
   const j = json as { status?: unknown; message?: unknown; items?: unknown };
   if (j.status !== 'ok') return { ok: false, items: [], error: cleanText(j.message, 160) || 'news service error' };
@@ -236,11 +245,16 @@ export function minusDays(ymd: string, n: number): string {
   return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
 
+
 // ---------------------------------------------------------------------------------------------------------------
 // Network (browser). Keyless endpoints only.
 // ---------------------------------------------------------------------------------------------------------------
 
 export const NEWS_REFRESH_MS = 15 * 60_000;
+/** A cached copy counts as fresh up to this long before NEWS_REFRESH_MS, so a 15-min timer never skips a refresh. */
+const FRESH_SLACK_MS = 60_000;
+/** Even a "try again" click waits at least this long after a failure (stops click-spam against a rate limit). */
+export const MIN_RETRY_GAP_MS = 10_000;
 
 /** At most two distinct feeds (rss2json's free tier limits new feeds). The second is only used to top up. */
 export const NEWS_QUERIES = ['gold price when:2d', 'gold (Fed OR dollar OR "central bank") when:2d'] as const;
@@ -250,11 +264,22 @@ export function googleNewsUrl(q: string): string {
   return `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}`;
 }
 
+/** Wait after the n-th consecutive failure: 1, 2, 4, 8 min, then capped at the normal refresh interval. */
+export function backoffMs(failures: number): number {
+  if (!(failures > 0)) return 0;
+  return Math.min(NEWS_REFRESH_MS, 60_000 * 2 ** Math.min(failures - 1, 10));
+}
+
+/** True when an error message looks like a rate limit (then we stop and do not try the second feed). */
+export function isRateLimited(msg: string): boolean {
+  return /\b429\b|rate[- ]?limit|too many|short period|quota|limit exceeded/i.test(msg);
+}
+
 async function getJson(url: string, timeoutMs = 9000): Promise<unknown> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: ctl.signal });
+    const res = await fetch(url, { signal: ctl.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
@@ -262,68 +287,109 @@ async function getJson(url: string, timeoutMs = 9000): Promise<unknown> {
   }
 }
 
+/** Shared cache + single-flight + exponential backoff for one remote source. */
+interface SourceState<T> {
+  value: T | null;
+  at: number; // ms epoch of the last success
+  inFlight: Promise<{ value: T; at: number; stale: boolean }> | null;
+  failures: number;
+  lastFailAt: number;
+  lastError: string;
+}
+
+const newSource = <T>(): SourceState<T> => ({ value: null, at: 0, inFlight: null, failures: 0, lastFailAt: 0, lastError: '' });
+
+function cachedLoad<T>(st: SourceState<T>, force: boolean, run: () => Promise<T>): Promise<{ value: T; at: number; stale: boolean }> {
+  const now = Date.now();
+  if (!force && st.value !== null && now - st.at < NEWS_REFRESH_MS - FRESH_SLACK_MS) {
+    return Promise.resolve({ value: st.value, at: st.at, stale: false });
+  }
+  if (st.inFlight) return st.inFlight;
+  const wait = backoffMs(st.failures);
+  const sinceFail = now - st.lastFailAt;
+  if (st.failures > 0 && (sinceFail < MIN_RETRY_GAP_MS || (!force && sinceFail < wait))) {
+    // Still backing off: answer from cache (marked stale) without touching the network.
+    if (st.value !== null) return Promise.resolve({ value: st.value, at: st.at, stale: true });
+    return Promise.reject(new Error(st.lastError || 'unavailable'));
+  }
+  const p = (async () => {
+    try {
+      const value = await run();
+      st.value = value;
+      st.at = Date.now();
+      st.failures = 0;
+      st.lastError = '';
+      return { value, at: st.at, stale: false };
+    } catch (e) {
+      st.failures += 1;
+      st.lastFailAt = Date.now();
+      st.lastError = e instanceof Error ? e.message : 'unavailable';
+      if (st.value !== null) return { value: st.value, at: st.at, stale: true };
+      throw e;
+    } finally {
+      st.inFlight = null;
+    }
+  })();
+  st.inFlight = p;
+  return p;
+}
+
 export interface NewsResult {
   items: Headline[];
   fetchedAt: number; // ms epoch of the last successful fetch
-  stale: boolean; // true if the latest attempt failed and this is the cached copy
+  stale: boolean; // true if the latest attempt failed (or we are backing off) and this is the cached copy
 }
 
-let newsCache: { items: Headline[]; at: number } | null = null;
-let newsInFlight: Promise<NewsResult> | null = null;
+let newsState = newSource<Headline[]>();
+let fxState = newSource<DollarMove>();
 
-/** Fetch recent gold headlines. Cached for 15 min; on failure returns the last good result (stale) or throws. */
-export function fetchNews(force = false): Promise<NewsResult> {
-  const now = Date.now();
-  if (!force && newsCache && now - newsCache.at < NEWS_REFRESH_MS - 5000) {
-    return Promise.resolve({ items: newsCache.items, fetchedAt: newsCache.at, stale: false });
-  }
-  if (newsInFlight) return newsInFlight;
-  newsInFlight = (async () => {
+/** Test hook: forget caches, in-flight requests and backoff. */
+export function _resetNetworkState(): void {
+  newsState = newSource<Headline[]>();
+  fxState = newSource<DollarMove>();
+}
+
+async function loadNews(): Promise<Headline[]> {
+  let items: Headline[] = [];
+  let lastErr = 'news unavailable';
+  let anyOk = false;
+  for (const q of NEWS_QUERIES) {
     try {
-      let items: Headline[] = [];
-      let lastErr = 'news unavailable';
-      let anyOk = false;
-      for (const q of NEWS_QUERIES) {
-        try {
-          const r = parseRss2Json(await getJson(googleNewsUrl(q)), Date.now());
-          if (r.ok) {
-            anyOk = true;
-            items = mergeHeadlines(items, r.items);
-          } else lastErr = r.error ?? lastErr;
-        } catch (e) {
-          lastErr = e instanceof Error ? e.message : lastErr;
-        }
-        if (items.length >= 12) break; // enough; spare the rate limit
-      }
-      if (!anyOk) throw new Error(lastErr);
-      newsCache = { items: items.slice(0, 40), at: Date.now() };
-      return { items: newsCache.items, fetchedAt: newsCache.at, stale: false };
+      const r = parseRss2Json(await getJson(googleNewsUrl(q)), Date.now());
+      if (r.ok) {
+        anyOk = true;
+        items = mergeHeadlines(items, r.items);
+      } else lastErr = r.error ?? lastErr;
     } catch (e) {
-      if (newsCache) return { items: newsCache.items, fetchedAt: newsCache.at, stale: true };
-      throw e;
-    } finally {
-      newsInFlight = null;
+      lastErr = e instanceof Error ? e.message : lastErr;
     }
-  })();
-  return newsInFlight;
+    if (items.length >= 12) break; // enough; spare the rate limit
+    if (!anyOk && isRateLimited(lastErr)) break; // the second feed would be refused too
+  }
+  if (!anyOk) throw new Error(lastErr);
+  return items.slice(0, 40);
 }
 
-let fxCache: { move: DollarMove; at: number } | null = null;
+/**
+ * Fetch recent gold headlines. Cached for 15 min, one request at a time, exponential backoff after failures.
+ * On failure returns the last good result (stale) or rejects.
+ */
+export async function fetchNews(force = false): Promise<NewsResult> {
+  const r = await cachedLoad(newsState, force, loadNews);
+  return { items: r.value, fetchedAt: r.at, stale: r.stale };
+}
 
-/** Dollar index proxy now vs ~1 week earlier (ECB fixings, weekdays). Cached 15 min; stale copy on failure. */
+async function loadDollar(): Promise<DollarMove> {
+  const now = parseFrankfurter(await getJson(`https://api.frankfurter.dev/v1/latest?base=USD&symbols=${DXY_SYMBOLS}`));
+  if (!now) throw new Error('bad FX payload');
+  const then = parseFrankfurter(await getJson(`https://api.frankfurter.dev/v1/${minusDays(now.date, 7)}?base=USD&symbols=${DXY_SYMBOLS}`));
+  if (!then) throw new Error('bad FX payload');
+  const move = dollarMove(then, now);
+  if (!move) throw new Error('FX dates out of order');
+  return move;
+}
+
+/** Dollar index proxy now vs ~1 week earlier (ECB fixings, weekdays). Same caching/backoff as the news. */
 export async function fetchDollarMove(): Promise<DollarMove> {
-  if (fxCache && Date.now() - fxCache.at < NEWS_REFRESH_MS - 5000) return fxCache.move;
-  try {
-    const now = parseFrankfurter(await getJson(`https://api.frankfurter.dev/v1/latest?base=USD&symbols=${DXY_SYMBOLS}`));
-    if (!now) throw new Error('bad FX payload');
-    const then = parseFrankfurter(await getJson(`https://api.frankfurter.dev/v1/${minusDays(now.date, 7)}?base=USD&symbols=${DXY_SYMBOLS}`));
-    if (!then) throw new Error('bad FX payload');
-    const move = dollarMove(then, now);
-    if (!move) throw new Error('FX dates out of order');
-    fxCache = { move, at: Date.now() };
-    return move;
-  } catch (e) {
-    if (fxCache) return fxCache.move;
-    throw e;
-  }
+  return (await cachedLoad(fxState, false, loadDollar)).value;
 }

@@ -30,7 +30,7 @@ function LeanBadge({ lean }: { lean: ThemeLean }) {
     lean === 'up'
       ? { t: 'usually helps gold', c: 'text-[#6fcf97] border-[#6fcf97]/35 bg-[#6fcf97]/10' }
       : lean === 'down'
-        ? { t: 'usually weighs on gold', c: 'text-[#ef6b6b] border-[#ef6b6b]/35 bg-[#ef6b6b]/10' }
+        ? { t: 'usually pushes gold down', c: 'text-[#ef6b6b] border-[#ef6b6b]/35 bg-[#ef6b6b]/10' }
         : lean === 'mixed'
           ? { t: 'mixed signals', c: 'text-[#f0cf72] border-[#d9a93f]/35 bg-[#d9a93f]/10' }
           : { t: 'direction unclear', c: 'text-[#a39b8a] border-white/10 bg-white/[0.03]' };
@@ -48,7 +48,7 @@ function HeadlineLink({ h, className = '' }: { h: Headline; className?: string }
   );
 }
 
-function WhyCard({ w }: { w: WhyItem }) {
+function WhyCard({ w, total }: { w: WhyItem; total: number }) {
   return (
     <li className="rounded-xl bg-[#0d0c09] border border-white/[0.06] p-3.5">
       <div className="flex items-start justify-between gap-3 mb-1.5">
@@ -58,7 +58,9 @@ function WhyCard({ w }: { w: WhyItem }) {
       <p className="text-[14px] leading-relaxed text-[#f4efe6]/90">{w.text}</p>
       {w.headlines.length > 0 && (
         <div className="mt-2.5 pt-2.5 border-t border-white/[0.05]">
-          <div className="text-[10px] uppercase tracking-[0.12em] text-[#7d7667] mb-1">In the news</div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-[#7d7667] mb-1">
+            In the news{w.mentions > 0 && total > 0 ? ` · ${w.mentions} of ${total} recent headline${total === 1 ? '' : 's'}` : ''}
+          </div>
           <ul className="flex flex-col gap-1">
             {w.headlines.map((h) => (
               <li key={h.title} className="text-[12px] leading-snug text-[#a39b8a]">
@@ -152,7 +154,7 @@ export function WhyGoldMoved({ series, spotUsd, toAed, unitText }: Props) {
                 <p className="text-[14px] leading-relaxed text-[#a39b8a] max-w-[64ch] mb-3">{ex.whyIntro}</p>
                 {ex.why.length > 0 && (
                   <ul className="flex flex-col gap-2.5">
-                    {ex.why.map((w) => <WhyCard key={`${w.id}-${w.fromData}`} w={w} />)}
+                    {ex.why.map((w) => <WhyCard key={`${w.id}-${w.fromData}`} w={w} total={ex.headlineCount} />)}
                   </ul>
                 )}
                 {news.kind === 'error' && (
