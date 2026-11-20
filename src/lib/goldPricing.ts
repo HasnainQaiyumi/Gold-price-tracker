@@ -1,10 +1,8 @@
 import type {
-  ArbitrageBreakdown,
   CurrencyCode,
   KaratPurity,
   MarketMode,
   PricingAssumptions,
-  PurchaseType,
 } from './types';
 
 export const TROY_OZ_GRAMS = 31.1034768;
@@ -114,86 +112,36 @@ export function getUnitLabel(grams: number): string {
   return `${grams}g`;
 }
 
-export function computeDubaiVsIndiaArbitrage(
-  spotUsdOz: number,
-  grams: number,
-  makingPct: number,
-  purchaseType: PurchaseType,
-  karat: KaratPurity,
-  assumptions: PricingAssumptions
-): ArbitrageBreakdown {
-  const safeGrams = Math.max(0.1, grams);
-  const safeMaking = Math.max(0, makingPct);
-  const effectiveKarat: KaratPurity = purchaseType === 'bullion' ? 24 : karat;
-
-  const uaeGoldBaseAed = convertUsdOzToMarket(
-    spotUsdOz,
-    'AED',
-    'actual',
-    effectiveKarat,
-    safeGrams,
-    assumptions
-  );
-  const uaeMakingAed =
-    purchaseType === 'bullion' ? uaeGoldBaseAed * 0.015 : uaeGoldBaseAed * (safeMaking / 100);
-  const uaeSub = uaeGoldBaseAed + uaeMakingAed;
-
-  let uaeNetVatAed = 0;
-  if (purchaseType === 'jewellery') {
-    uaeNetVatAed = uaeSub * 0.05;
-  } else if (purchaseType === 'tourist') {
-    // UAE Planet Tax Free refunds ~85% of the 5% VAT at airport departure
-    uaeNetVatAed = uaeSub * 0.05 * 0.15;
-  }
-
-  const uaeTotalAed = uaeSub + uaeNetVatAed;
-  const aedToInr = assumptions.usdInr / assumptions.usdAed;
-  const uaeTotalInr = uaeTotalAed * aedToInr;
-
-  // India actual retail gold includes 3% GST; isolate pre-GST landed value first
-  const indRetailWithGstInr = convertUsdOzToMarket(
-    spotUsdOz,
-    'INR',
-    'actual',
-    effectiveKarat,
-    safeGrams,
-    assumptions
-  );
-  const indGoldLandedInr = indRetailWithGstInr / (1 + assumptions.indiaGstPct / 100);
-  const indMakingInr =
-    purchaseType === 'bullion' ? indGoldLandedInr * 0.015 : indGoldLandedInr * (safeMaking / 100);
-  const indGstInr = (indGoldLandedInr + indMakingInr) * (assumptions.indiaGstPct / 100);
-  const indTotalInr = indGoldLandedInr + indMakingInr + indGstInr;
-  const indTotalAed = indTotalInr / aedToInr;
-
-  const savingsInr = indTotalInr - uaeTotalInr;
-  const savingsPct = indTotalInr > 0 ? (savingsInr / indTotalInr) * 100 : 0;
-
-  let cheaperMarket: ArbitrageBreakdown['cheaperMarket'] = 'Parity';
-  if (savingsInr > 100) cheaperMarket = 'Dubai';
-  else if (savingsInr < -100) cheaperMarket = 'India';
-
-  return {
-    uaeGoldBaseAed,
-    uaeMakingAed,
-    uaeNetVatAed,
-    uaeTotalAed,
-    uaeTotalInr,
-    indGoldLandedInr,
-    indMakingInr,
-    indGstInr,
-    indTotalInr,
-    indTotalAed,
-    savingsInr,
-    savingsPct,
-    cheaperMarket,
-  };
-}
-
 /** AED is fixed to USD at 3.6725 (official peg). */
 export const AED_PEG = 3.6725;
 
 /** USD per troy oz -> AED per gram of 24K. */
 export function usdOzToAedPerG(usdOz: number): number {
   return (usdOz / TROY_OZ_GRAMS) * AED_PEG;
+}
+
+export const KARATS: KaratPurity[] = [24, 22, 21, 18];
+
+export const UNITS = [
+  { label: 'gram', short: 'g', grams: 1 },
+  { label: '10 grams', short: '10g', grams: 10 },
+  { label: 'tola', short: 'tola', grams: 11.6638 },
+  { label: 'ounce', short: 'oz', grams: TROY_OZ_GRAMS },
+] as const;
+
+/** Spot value in AED of `grams` of `karat` gold (pure-gold content; no shop premium). */
+export function usdOzToAed(usdOz: number, karat: KaratPurity = 24, grams = 1): number {
+  return usdOzToAedPerG(usdOz) * KARAT_FACTOR[karat] * grams;
+}
+
+/** Compact AED figure: no decimals for big numbers, 2 for small. */
+export function fmtAed(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  return v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2);
+}
+
+/** Even more compact, for range ends. */
+export function fmtShort(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  return v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1);
 }

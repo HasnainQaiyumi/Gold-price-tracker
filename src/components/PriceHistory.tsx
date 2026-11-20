@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { annualisedVolPct, maxDrawdownPct, returnPct, rsi, smaSeries } from '../lib/goldAnalytics';
-import { usdOzToAedPerG } from '../lib/goldPricing';
 import type { DailyClose } from '../lib/types';
 
 const RANGES = [
@@ -12,10 +11,9 @@ const RANGES = [
 ];
 
 const pct = (v: number | null, d = 1) => (v === null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`);
-const tone = (v: number | null) => (v === null ? 'text-[#94a3b8]' : v >= 0 ? 'text-[#10b981]' : 'text-[#f43f5e]');
-const g = usdOzToAedPerG;
+const tone = (v: number | null) => (v === null ? 'text-[#a39b8a]' : v >= 0 ? 'text-[#6fcf97]' : 'text-[#ef6b6b]');
 
-export function PriceHistory({ series }: { series: DailyClose[] | null }) {
+export function PriceHistory({ series, toAed: g, unitText }: { series: DailyClose[] | null; toAed: (usd: number) => number; unitText: string }) {
   const [range, setRange] = useState(180);
   const [hover, setHover] = useState<number | null>(null);
 
@@ -60,29 +58,29 @@ export function PriceHistory({ series }: { series: DailyClose[] | null }) {
 
   if (!series || !calc || !view) {
     return (
-      <section className="rounded-xl bg-[#11161e] border border-white/[0.08] p-5 text-xs text-[#94a3b8]">
+      <section className="panel text-xs text-[#a39b8a]">
         Price history unavailable right now. Only real daily closes are ever shown, never invented ones.
       </section>
     );
   }
   const hp = hover !== null ? view.pts[hover] : null;
   const stat = (k: string, v: React.ReactNode) => (
-    <div key={k} className="rounded-lg bg-[#090c10] border border-white/[0.08] p-3">
-      <div className="text-[#94a3b8]">{k}</div>
-      <div className="text-sm font-semibold font-mono-num text-[#f1f4f8] mt-0.5">{v}</div>
+    <div key={k} className="rounded-lg bg-[#0d0c09] border border-white/[0.08] p-3">
+      <div className="text-[#a39b8a]">{k}</div>
+      <div className="text-sm font-semibold font-mono-num text-[#f4efe6] mt-0.5">{v}</div>
     </div>
   );
 
   return (
-    <section aria-label="Gold price history" className="rounded-xl bg-[#11161e] border border-white/[0.08] p-5 flex flex-col gap-4">
+    <section aria-label="Gold price history" className="panel flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-lg font-bold text-[#f8fafc]">History</h2>
+        <h2 className="panel-title">History</h2>
         <div className="flex items-center gap-3">
-          <div className="text-xs text-[#94a3b8] font-mono-num h-4 hidden md:block">{hp ? `${hp.date} · AED ${hp.y.toFixed(2)}/g` : 'AED per gram, 24K'}</div>
-          <div role="group" aria-label="Chart range" className="inline-flex bg-[#090c10] border border-white/[0.08] rounded-lg p-1 gap-1">
+          <div className="text-xs text-[#a39b8a] font-mono-num h-4 hidden md:block">{hp ? `${hp.date} · AED ${hp.y.toFixed(2)}` : `AED ${unitText}`}</div>
+          <div role="group" aria-label="Chart range" className="inline-flex bg-[#0d0c09] border border-white/[0.08] rounded-lg p-1 gap-1">
             {RANGES.map((r) => (
               <button key={r.label} type="button" onClick={() => setRange(r.n)} aria-pressed={range === r.n}
-                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer border ${range === r.n ? 'bg-[#e5b842]/20 text-[#f3d06b] border-[#e5b842]/40' : 'text-[#94a3b8] border-transparent'}`}>
+                className={`px-3 py-1 text-xs font-semibold rounded-md cursor-pointer border ${range === r.n ? 'bg-[#d9a93f]/20 text-[#f0cf72] border-[#d9a93f]/40' : 'text-[#a39b8a] border-transparent'}`}>
                 {r.label}
               </button>
             ))}
@@ -98,27 +96,27 @@ export function PriceHistory({ series }: { series: DailyClose[] | null }) {
         }}>
         <polyline points={view.s200} fill="none" stroke="#818cf8" strokeWidth="1.2" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
         <polyline points={view.s50} fill="none" stroke="#38bdf8" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
-        <polyline points={view.price} fill="none" stroke="#e5b842" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-        {hover !== null && <line x1={view.x(hover)} x2={view.x(hover)} y1={0} y2={H} stroke="#64748b" strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+        <polyline points={view.price} fill="none" stroke="#d9a93f" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        {hover !== null && <line x1={view.x(hover)} x2={view.x(hover)} y1={0} y2={H} stroke="#7d7667" strokeWidth="1" vectorEffect="non-scaling-stroke" />}
       </svg>
-      <div className="flex gap-4 text-[11px] text-[#94a3b8]">
-        <span><span className="text-[#e5b842]">━</span> Price</span>
+      <div className="flex gap-4 text-[11px] text-[#a39b8a]">
+        <span><span className="text-[#d9a93f]">━</span> Price</span>
         <span><span className="text-[#38bdf8]">━</span> 50-day avg</span>
         <span><span className="text-[#818cf8]">┅</span> 200-day avg</span>
-        <span className="ml-auto font-mono-num">AED {view.min.toFixed(0)}–{view.max.toFixed(0)}/g · {view.pts[0].date} to {view.pts[view.pts.length - 1].date}</span>
+        <span className="ml-auto font-mono-num">AED {view.min.toFixed(0)}–{view.max.toFixed(0)} · {view.pts[0].date} to {view.pts[view.pts.length - 1].date}</span>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         {stat('1M / 3M / 1Y', <span><span className={tone(calc.r1m)}>{pct(calc.r1m)}</span> / <span className={tone(calc.r3m)}>{pct(calc.r3m)}</span> / <span className={tone(calc.r1y)}>{pct(calc.r1y)}</span></span>)}
-        {stat('RSI (14)', <span>{calc.rsi === null ? '—' : calc.rsi.toFixed(0)} <span className="text-[#64748b]">{calc.rsi === null ? '' : calc.rsi > 70 ? 'overbought' : calc.rsi < 30 ? 'oversold' : 'neutral'}</span></span>)}
+        {stat('RSI (14)', <span>{calc.rsi === null ? '—' : calc.rsi.toFixed(0)} <span className="text-[#7d7667]">{calc.rsi === null ? '' : calc.rsi > 70 ? 'overbought' : calc.rsi < 30 ? 'oversold' : 'neutral'}</span></span>)}
         {stat('Volatility (30d, annual)', calc.vol === null ? '—' : `${calc.vol.toFixed(1)}%`)}
-        {stat('Worst fall (1Y)', <span className="text-[#f43f5e]">{pct(calc.dd)}</span>)}
-        {stat('1Y high / low (AED/g)', `${g(calc.hi).toFixed(0)} / ${g(calc.lo).toFixed(0)}`)}
+        {stat('Worst fall (1Y)', <span className="text-[#ef6b6b]">{pct(calc.dd)}</span>)}
+        {stat('1Y high / low (AED)', `${g(calc.hi).toFixed(0)} / ${g(calc.lo).toFixed(0)}`)}
         {stat('From 1Y high', <span className={tone(calc.fromHigh)}>{pct(calc.fromHigh)}</span>)}
         {stat('vs 50-day avg', <span className={tone(calc.vs50)}>{pct(calc.vs50)}</span>)}
         {stat('vs 200-day avg', <span className={tone(calc.vs200)}>{pct(calc.vs200)}</span>)}
       </div>
-      <div className="text-[11px] text-[#64748b]">
+      <div className="text-[11px] text-[#7d7667]">
         History: daily closes of PAXG (gold-backed token, 1 token = 1 oz, trades 24/7), scaled to match live spot gold. Its price tracks spot within about 0.3%.
       </div>
     </section>
