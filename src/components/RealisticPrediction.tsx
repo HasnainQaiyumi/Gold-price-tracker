@@ -15,6 +15,7 @@ const t = (ymd: string) => Date.parse(`${ymd}T00:00:00Z`);
 const PAST_DAYS = 130;
 const FUTURE_DAYS = 90;
 const LABEL = { 7: '1 week', 30: '1 month', 90: '3 months' } as Record<number, string>;
+const aed2 = (v: number) => `AED ${v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2)}`;
 const aed = (v: number) => `AED ${v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(0)}`;
 const monthDay = (ymd: string) => new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
@@ -103,14 +104,14 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props)
 
           {/* now */}
           <circle cx={X(nowT)} cy={Y(now)} r="7" fill="#f0cf72" stroke="#14120e" strokeWidth="2" />
-          <text x={X(nowT) - 12} y={Y(now) + 26} textAnchor="end" fontSize="13" fontWeight="700" fill="#fbf7ef">Current price {aed(now)}</text>
+          <text x={X(nowT) - 12} y={Y(now) + 26} textAnchor="end" fontSize="13" fontWeight="700" fill="#fbf7ef">Current price {aed2(now)}</text>
 
           {/* realistic points */}
           {path.map((p, i) => (
             <g key={p.days}>
               <circle cx={X(t(p.date))} cy={Y(toAed(p.usd))} r="5" fill="#d9a93f" />
               <text x={X(t(p.date)) + (i === path.length - 1 ? 14 : 0)} y={Y(toAed(p.usd)) - 14 - (i === 1 ? 18 : 0)} textAnchor={i === path.length - 1 ? 'start' : 'middle'} fontSize="12" fill="#f0cf72">
-                {LABEL[p.days] ?? `${p.days} days`}: {aed(toAed(p.usd))}
+                {LABEL[p.days] ?? `${p.days} days`}: {aed2(toAed(p.usd))}
               </text>
             </g>
           ))}
@@ -128,7 +129,10 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props)
         {path.map((p) => (
           <div key={p.days} className="rounded-2xl bg-[#0d0c09] border border-white/[0.07] p-4">
             <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667]">In {LABEL[p.days] ?? `${p.days} days`} · {monthDay(p.date)}</div>
-            <div className="font-display text-2xl font-semibold text-[#f0cf72] mt-1">{aed(toAed(p.usd))}</div>
+            <div className="font-display text-2xl font-semibold text-[#f0cf72] mt-1">{aed2(toAed(p.usd))}</div>
+            <div className="text-[12px] text-[#6fcf97] mt-0.5">
+              +{(toAed(p.usd) - now).toFixed(2)} AED vs today (+{((p.usd / spotUsd - 1) * 100).toFixed(1)}%)
+            </div>
             <div className="text-[12px] text-[#cfc7b6] mt-1">Usually lands within about {p.typicalMissPct.toFixed(0)}% of this, either way.</div>
             <div className="mt-3 pt-3 border-t border-white/[0.07]">
               <div className="text-[11px] uppercase tracking-[0.12em] text-[#6fcf97] font-semibold">99% sure</div>
@@ -146,9 +150,9 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props)
       </div>
 
       <div className="mt-5 max-w-[860px]">
-        <h3 className="font-display text-[1.05rem] font-semibold text-[#fbf7ef] mb-2">Why the most realistic line is so close to today's price</h3>
+        <h3 className="font-display text-[1.05rem] font-semibold text-[#fbf7ef] mb-2">Why the line only rises gently</h3>
         <p className="text-[15px] leading-[1.8] text-[#e8e1d2]">
-          It may look too simple, but it is the most honest prediction there is. Today's price already includes everything the world knows: interest rates, the dollar, wars, central bank buying. What will move gold next is news that has not happened yet, and nobody can see that coming. We tested every popular method on 55 years of gold prices, including trend rules and machine learning. None of them could reliably say whether gold would be higher or lower a month later, so any line pointing up or down would just be a guess dressed up as science. Over very long periods gold has grown about {LONG_RUN_GROWTH_PCT_PER_YEAR}% a year on average, but that is less than 1% a month, which is tiny next to its normal swings. So the realistic answer is: expect it near {aed(now)}, and expect it to wander{p30 ? ` about ${p30.typicalMissPct.toFixed(0)}% either way over a month` : ''}.
+          Each estimate is today's price plus gold's long-run average growth, about {LONG_RUN_GROWTH_PCT_PER_YEAR}% a year since 1971, so the further ahead you look, the higher it sits: a little after one week, a bit more after one month, and more after three months. That is the most honest prediction there is. Today's price already includes everything the world knows: interest rates, the dollar, wars, central bank buying. What will move gold next is news that has not happened yet, and nobody can see it coming. We tested every popular method on 55 years of gold prices, including trend rules and machine learning, and none could reliably say whether gold would be higher or lower a month later. So a steeper line up or down would be a guess dressed up as science. What you can rely on is the size of the swings: expect gold to wander{p30 ? ` about ${p30.typicalMissPct.toFixed(0)}% either way over a month` : ' a fair amount'} around this line, and use the 99% range to see how far it could realistically go.
         </p>
         <p className="mt-3 text-[14px] leading-relaxed text-[#cfc7b6]">
           <span className="font-semibold text-[#fbf7ef]">What "99% sure" means. </span>

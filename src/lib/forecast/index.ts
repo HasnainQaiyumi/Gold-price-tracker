@@ -59,6 +59,12 @@ export const CONSTANTS_FITTED_THROUGH = '2026-11-19';
 export const LIKELY_PROB = 0.68;
 export const EXTREME_PROB = 0.95;
 export const SURE_PROB = 0.99;
+
+/** Gold's long-run average growth: Aug 1971 -> Oct 2026, 43 -> 4105 USD/oz = 8.6% a year (monthly data).
+ * Forecasts are centred on today's price grown at this rate. It is a long-run average, not a call on
+ * the next move: no direction signal passed the out-of-sample tests. */
+export const LONG_RUN_GROWTH_PER_YEAR = 0.086;
+export const DRIFT_PER_DAY = Math.log(1 + LONG_RUN_GROWTH_PER_YEAR) / 365;
 /** Share of up-months in gold's monthly prices 1971-2026 (52.3% of 637 months). Used as the 30-day
  * probability of a rise because no direction signal was proven: the only Bonferroni survivor (price vs
  * 10-month average, 1 month) had no edge over "always up" in 2008-2026 (52% vs 54%) (report section 6). */
@@ -206,7 +212,7 @@ export interface WalkForward {
 }
 
 /** Runs the engine at every bar t using only bars 0..t. The last row is the live forecast. */
-export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
+export function walkForward(s: Series, vol: VolPath, h: number, drift = DRIFT_PER_DAY): WalkForward {
   const n = s.p.length;
   const sd = new Float64Array(n).fill(NaN);
   const q68 = new Float64Array(n).fill(NaN);
@@ -225,7 +231,7 @@ export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
   for (let j = SCORE_WARMUP; j < n; j++) {
     const k = outcome[j];
     if (k < 0 || !Number.isFinite(sd[j]) || sd[j] <= 0) continue;
-    arrivals[k].push(Math.abs(Math.log(s.p[k] / s.p[j])) / sd[j]);
+    arrivals[k].push(Math.abs(Math.log(s.p[k] / s.p[j]) - drift * h) / sd[j]);
   }
   const sorted: number[] = [];
   for (let t = 0; t < n; t++) {
@@ -242,7 +248,7 @@ export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
 /** Walk-forward hit rates over origins whose own prefix had >= MIN_BARS bars (overlapping windows).
  * Origins with a zero-width range (sd = 0, e.g. a stale feed repeating one price) are not counted:
  * a range of width 0 "containing" an unchanged price is not a meaningful hit. */
-export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
+export function scorecardFor(s: Series, wf: WalkForward, h: number, drift = DRIFT_PER_DAY): Scorecard {
   let samples = 0;
   let likely = 0;
   let extreme = 0;
@@ -250,7 +256,7 @@ export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
   for (let t = MIN_BARS - 1; t < s.p.length; t++) {
     const k = wf.outcome[t];
     if (k < 0 || !(wf.sd[t] > 0) || !Number.isFinite(wf.sd[t]) || !Number.isFinite(wf.q68[t]) || !Number.isFinite(wf.q95[t])) continue;
-    const z = Math.abs(Math.log(s.p[k] / s.p[t]));
+    const z = Math.abs(Math.log(s.p[k] / s.p[t]) - drift * h);
     samples++;
     if (z <= wf.q68[t] * wf.sd[t]) likely++;
     if (z <= wf.q95[t] * wf.sd[t]) extreme++;
@@ -266,18 +272,19 @@ export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
 }
 
 function rangeAt(now: number, sd: number, q68: number, q95: number, q99: number, h: number): RangeForecast {
+  const c = now * Math.exp(DRIFT_PER_DAY * h); // today's price grown at the long-run average rate
   return {
     days: h,
     now,
-    median: now,
-    likelyLow: now * Math.exp(-q68 * sd),
-    likelyHigh: now * Math.exp(q68 * sd),
-    extremeLow: now * Math.exp(-q95 * sd),
-    extremeHigh: now * Math.exp(q95 * sd),
+    median: c,
+    likelyLow: c * Math.exp(-q68 * sd),
+    likelyHigh: c * Math.exp(q68 * sd),
+    extremeLow: c * Math.exp(-q95 * sd),
+    extremeHigh: c * Math.exp(q95 * sd),
     likelyProb: LIKELY_PROB,
     extremeProb: EXTREME_PROB,
-    sureLow: now * Math.exp(-q99 * sd),
-    sureHigh: now * Math.exp(q99 * sd),
+    sureLow: c * Math.exp(-q99 * sd),
+    sureHigh: c * Math.exp(q99 * sd),
     sureProb: SURE_PROB,
   };
 }

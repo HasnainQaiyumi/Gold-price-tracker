@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { DailyBar } from './types';
-import {
+import { DRIFT_PER_DAY,
   BASE_RATE_UP_30D,
   conformalQuantile,
   forecastGold,
@@ -104,14 +104,15 @@ test('toSeries: drops invalid rows, sorts, de-duplicates by date (last wins)', (
   assert.equal(s.day[1] - s.day[0], 2);
 });
 
-test('ranges: centred on spot, symmetric in log space, nested, widen with horizon', () => {
+test('ranges: centred on spot grown at the long-run rate, symmetric in log space, nested, widen with horizon', () => {
   const f = forecastGold(REAL, 3600)!;
   assert.ok(f);
   for (const r of f.ranges) {
+    const c = 3600 * Math.exp(DRIFT_PER_DAY * r.days);
     assert.equal(r.now, 3600);
-    assert.equal(r.median, 3600);
-    assert.ok(Math.abs(r.likelyLow * r.likelyHigh - 3600 * 3600) < 1e-6);
-    assert.ok(Math.abs(r.extremeLow * r.extremeHigh - 3600 * 3600) < 1e-6);
+    assert.ok(Math.abs(r.median - c) < 1e-9);
+    assert.ok(Math.abs(r.likelyLow * r.likelyHigh - c * c) < 1e-6);
+    assert.ok(Math.abs(r.extremeLow * r.extremeHigh - c * c) < 1e-6);
     assert.ok(r.extremeLow < r.likelyLow && r.likelyLow < r.median && r.median < r.likelyHigh && r.likelyHigh < r.extremeHigh);
     assert.equal(r.likelyProb, 0.68);
     assert.equal(r.extremeProb, 0.95);
@@ -134,8 +135,8 @@ test('walk-forward matches the Python research implementation', () => {
     90: { n: 511, in68: 0.5929549902152642, in95: 0.9275929549902152, sd: 0.13707458002870232, q68: 1.1391241589537175, q95: 2.246061747757771, sd300: 0.08674960248327464, q68_300: 1.0400033115734906, q95_300: 2.2263434364323698 },
   };
   for (const h of [7, 30, 90]) {
-    const wf = walkForward(s, vol, h);
-    const sc = scorecardFor(s, wf, h);
+    const wf = walkForward(s, vol, h, 0);
+    const sc = scorecardFor(s, wf, h, 0);
     const r = ref[h];
     assert.equal(sc.samples, r.n);
     assert.ok(Math.abs(sc.likelyHitRate - r.in68) < 1e-12, `h=${h} in68`);
@@ -170,8 +171,8 @@ test('NO LEAKAGE: forecasts made at t are identical when data after t is altered
       const wf = walkForward(s, vol, h);
       const r = f.ranges.find((x) => x.days === h)!;
       const P = REAL[t].usd;
-      assert.ok(Math.abs(r.likelyHigh / (P * Math.exp(wf.q68[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} likely`);
-      assert.ok(Math.abs(r.extremeLow / (P * Math.exp(-wf.q95[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} extreme`);
+      assert.ok(Math.abs(r.likelyHigh / (P * Math.exp(DRIFT_PER_DAY * h) * Math.exp(wf.q68[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} likely`);
+      assert.ok(Math.abs(r.extremeLow / (P * Math.exp(DRIFT_PER_DAY * h) * Math.exp(-wf.q95[t] * wf.sd[t])) - 1) < 1e-12, `t=${t} h=${h} extreme`);
     }
   }
 });
@@ -239,7 +240,7 @@ test('returns null for short or unusable input; works from MIN_BARS', () => {
   assert.equal(f!.ranges.length, 3);
   assert.deepEqual(f!.scorecard.map((s) => s.horizonDays), []);
   // early on the multipliers are the prior
-  assert.ok(Math.abs(Math.log(f!.ranges[2].likelyHigh / 3000) / Math.log(f!.ranges[2].extremeHigh / 3000) - PRIOR_Q68 / PRIOR_Q95) < 1e-12);
+  assert.ok(Math.abs(Math.log(f!.ranges[2].likelyHigh / f!.ranges[2].median) / Math.log(f!.ranges[2].extremeHigh / f!.ranges[2].median) - PRIOR_Q68 / PRIOR_Q95) < 1e-12);
 });
 
 test('stale feed: flat prices give null, not a zero-width range scored as "100% right"', () => {

@@ -13,10 +13,11 @@ test('one realistic price per horizon, centred on today, with a typical miss', (
   const p = realisticPath(rows, spot)!;
   assert.deepEqual(p.map((x) => x.days), [7, 30, 90]);
   for (const x of p) {
-    assert.ok(Math.abs(x.usd / spot - 1) < 1e-9, 'median is today (no proven direction)');
+    assert.ok(Math.abs(x.usd / (spot * Math.pow(1.086, x.days / 365)) - 1) < 1e-9, "today's price grown at the long-run average rate");
     assert.ok(x.typicalMissPct > 0 && x.lo < x.usd && x.hi > x.usd);
   }
   assert.ok(p[2].typicalMissPct > p[0].typicalMissPct, 'further out = less certain');
+  assert.ok(p[0].usd < p[1].usd && p[1].usd < p[2].usd, 'each horizon has its own estimate');
 });
 
 test('track record uses only data known at the time and compares with reality', () => {
