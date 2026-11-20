@@ -140,7 +140,7 @@ export function WhyGoldMoved({ series, spotUsd, toAed, unitText }: Props) {
     <section aria-label="Gold explained" className="panel">
       <header className="mb-4">
         <h2 className="panel-title text-[1.35rem]">Gold explained</h2>
-        <p className="text-xs text-[#a39b8a] mt-1">What is happening in the world, and how it reaches the gold price. Updated once a day.</p>
+        <p className="text-xs text-[#a39b8a] mt-1">What is happening in the world, and how it reaches the gold price. Updated every 8 hours.</p>
       </header>
 
       {!x ? (

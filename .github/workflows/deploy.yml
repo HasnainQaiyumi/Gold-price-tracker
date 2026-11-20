@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
   schedule:
-    - cron: "50 3 * * *" # refresh the "Why gold is moving" paragraph once a day, ~7:50am Dubai (before the default 8am morning email)
+    - cron: "50 3,11,19 * * *" # refresh "Gold explained" every 8 hours, ~10 min before each briefing (8am, 4pm, midnight Dubai)
   workflow_dispatch:
 
 permissions:

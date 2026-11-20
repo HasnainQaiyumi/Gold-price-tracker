@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dailyDue, DEFAULT_CONFIG, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, parseTargetsText, parseTargetsTextDetailed, sanitizeConfig, sanitizeState, settingsFromEnv, type Facts } from './serverAlerts';
+import { summaryDue, summarySlot, DEFAULT_CONFIG, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, parseTargetsText, parseTargetsTextDetailed, sanitizeConfig, sanitizeState, settingsFromEnv, type Facts } from './serverAlerts';
 
 const facts = (p: number, extra: Partial<Facts> = {}): Facts => ({
   price24: p, prevClose24: 400, high52: 450, low52: 350, sma200: 400, day: '2026-11-20', marketOpen: true, ...extra,
@@ -53,7 +53,7 @@ test('config and state sanitizers reject junk', () => {
   assert.deepEqual(sanitizeConfig(null).targets, []);
   assert.equal(sanitizeConfig({ dailyMovePct: null }).dailyMovePct, null);
   const s = sanitizeState({ armed: { a: true, b: 'no' }, lastMoveDay: 'bad', trendSide: 'sideways' });
-  assert.deepEqual(s, { armed: { a: true }, lastMoveDay: undefined, lastHighDay: undefined, lastLowDay: undefined, trendSide: undefined, lastDailyDay: undefined });
+  assert.deepEqual(s, { armed: { a: true }, lastMoveDay: undefined, lastHighDay: undefined, lastLowDay: undefined, trendSide: undefined, lastDailyDay: undefined, lastSummarySlot: undefined });
 });
 
 test('plain-text targets are parsed forgivingly', () => {
@@ -71,26 +71,35 @@ test('settings from repository variables override the file, junk keeps defaults'
   const a = settingsFromEnv({ ALERT_TARGETS: 'below 410', ALERT_DAILY_MOVE: 'off', DAILY_SUMMARY: 'both', DAILY_SUMMARY_HOUR: '9', WHATSAPP_QUIET_HOURS: '22-6' }, file);
   assert.deepEqual(a.config.targets.map((x) => x.aedPerGram24k), [410]);
   assert.equal(a.config.dailyMovePct, null);
-  assert.deepEqual(a.notify, { daily: 'both', dailyHourDubai: 9, quietHours: [22, 6] });
+  assert.deepEqual(a.notify, { daily: 'both', dailyHourDubai: 9, everyHours: 8, quietHours: [22, 6] });
   const b = settingsFromEnv({ DAILY_SUMMARY: 'sms', DAILY_SUMMARY_HOUR: '99', WHATSAPP_QUIET_HOURS: 'nights' }, file);
   assert.deepEqual(b.config.targets.map((x) => x.aedPerGram24k), [500], 'empty variable keeps file targets');
-  assert.deepEqual(b.notify, { daily: 'email', dailyHourDubai: 8, quietHours: [23, 7] });
+  assert.deepEqual(b.notify, { daily: 'email', dailyHourDubai: 8, everyHours: 8, quietHours: [23, 7] });
+  assert.equal(settingsFromEnv({ SUMMARY_EVERY_HOURS: '6' }, file).notify.everyHours, 6);
+  assert.equal(settingsFromEnv({ SUMMARY_EVERY_HOURS: '5' }, file).notify.everyHours, 8, 'must divide 24');
   assert.equal(settingsFromEnv({ WHATSAPP_QUIET_HOURS: 'off' }, file).notify.quietHours, null);
 });
 
-test('Dubai clock, quiet hours and daily summary timing', () => {
+test('Dubai clock, quiet hours and 8-hourly briefing slots', () => {
   const t = Date.parse('2026-11-20T03:30:00Z'); // 07:30 Dubai
   assert.deepEqual(dubaiClock(t), { hour: 7, date: '2026-11-20' });
   assert.equal(inQuietHours(23, [23, 7]), true);
   assert.equal(inQuietHours(6, [23, 7]), true);
   assert.equal(inQuietHours(7, [23, 7]), false);
   assert.equal(inQuietHours(12, null), false);
-  const n = { daily: 'email' as const, dailyHourDubai: 8, quietHours: null };
-  assert.equal(dailyDue({ armed: {} }, t, n), false, 'before 8am');
-  const t2 = Date.parse('2026-11-20T04:05:00Z'); // 08:05 Dubai
-  assert.equal(dailyDue({ armed: {} }, t2, n), true);
-  assert.equal(dailyDue({ armed: {}, lastDailyDay: '2026-11-20' }, t2, n), false, 'once per day');
-  assert.equal(dailyDue({ armed: {} }, t2, { ...n, daily: 'off' }), false);
+  const n = { daily: 'email' as const, dailyHourDubai: 8, everyHours: 8, quietHours: null };
+  // slots: midnight, 8am, 4pm Dubai
+  assert.equal(summarySlot(t, n), '2026-11-20T00', '07:30 belongs to the midnight slot');
+  assert.equal(summarySlot(Date.parse('2026-11-20T04:05:00Z'), n), '2026-11-20T08');
+  assert.equal(summarySlot(Date.parse('2026-11-20T12:30:00Z'), n), '2026-11-20T16');
+  assert.equal(summarySlot(Date.parse('2026-11-20T19:59:00Z'), n), '2026-11-20T16', '23:59 Dubai');
+  assert.equal(summarySlot(Date.parse('2026-11-20T20:01:00Z'), n), '2026-11-21T00', 'midnight Dubai');
+  const t2 = Date.parse('2026-11-20T04:05:00Z');
+  assert.equal(summaryDue({ armed: {} }, t2, n), true);
+  assert.equal(summaryDue({ armed: {}, lastSummarySlot: '2026-11-20T08' }, t2, n), false, 'once per slot');
+  assert.equal(summaryDue({ armed: {}, lastSummarySlot: '2026-11-20T08' }, Date.parse('2026-11-20T12:01:00Z'), n), true, 'next slot at 4pm');
+  assert.equal(summaryDue({ armed: {} }, t2, { ...n, daily: 'off' }), false);
+  assert.equal(sanitizeState({ lastSummarySlot: 'nope' }).lastSummarySlot, undefined);
 });
 
 test('fresh memory does not re-fire targets that are already crossed', () => {
