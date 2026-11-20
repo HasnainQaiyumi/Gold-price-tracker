@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { backtestLadder, chooseTargets, claimHeld, DEFAULT_TARGET, makeClaims, NEED, type Claim } from './claims';
+import { backtestLadder, chooseTargets, claimHeld, DEFAULT_TARGET, makeClaims, NEED, sanitizeCalibration, type Claim } from './claims';
 import { curve, fan, prepare, simulate } from './montecarlo';
 
 const fx: { start: string; closes: number[] } = JSON.parse(readFileSync(new URL('../fixtures/paxg-kraken-daily.json', import.meta.url), 'utf8'));
@@ -52,4 +52,13 @@ test('self-calibration on real gold: week and month ranges held >= 99%, the rest
     assert.ok(r.checks >= 100, `${r.kind} checks ${r.checks}`);
     assert.ok(r.held / r.checks >= NEED[r.kind], `${r.kind} at ${r.target}: ${(100 * r.held / r.checks).toFixed(1)}%`);
   }
+});
+
+test('published calibration: only ladder levels and complete rows are accepted', () => {
+  const tested = (['week', 'month', 'floor7', 'floor30', 'ceiling30'] as const).map((kind) => ({ kind, checks: 100, held: 99, target: 0.99 }));
+  const good = { generatedAt: '2026-11-20T00:00:00Z', fromDate: '2005-01-03', targets: { week: 0.99, month: 0.99, floor7: 0.95, floor30: 0.95, ceiling30: 0.96 }, tested };
+  assert.ok(sanitizeCalibration(good));
+  assert.equal(sanitizeCalibration({ ...good, targets: { ...good.targets, week: 0.5 } }), null);
+  assert.equal(sanitizeCalibration({ ...good, tested: tested.slice(1) }), null);
+  assert.equal(sanitizeCalibration({ ...good, tested: [{ ...tested[0], held: 101 }, ...tested.slice(1)] }), null);
 });

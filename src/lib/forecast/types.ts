@@ -44,3 +44,9 @@ export interface ForecastResult {
   direction: DirectionView;
   scorecard: Scorecard[];
 }
+
+/** Market-implied volatility (e.g. CBOE Gold Volatility Index, GVZ): annualised %, by date. */
+export interface ImpliedVol {
+  date: string; // YYYY-MM-DD
+  pct: number; // e.g. 28.04
+}

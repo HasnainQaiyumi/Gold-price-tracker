@@ -16,7 +16,8 @@
  * forecast is literally the last row of the same walk-forward that produces the scorecard.
  * Runtime is O(n^2) in the worst case with tiny constants (~ms for 730 bars); no MLE at runtime.
  */
-import type { DailyBar, DirectionView, ForecastResult, RangeForecast, Scorecard } from './types';
+import type {
+  ImpliedVol, DailyBar, DirectionView, ForecastResult, RangeForecast, Scorecard } from './types';
 
 // ---- constants fitted offline (numbers from forecast_report.md) ----
 
@@ -65,6 +66,29 @@ export const SURE_PROB = 0.99;
  * the next move: no direction signal passed the out-of-sample tests. */
 export const LONG_RUN_GROWTH_PER_YEAR = 0.086;
 export const DRIFT_PER_DAY = Math.log(1 + LONG_RUN_GROWTH_PER_YEAR) / 365;
+
+/** Weight of market-implied volatility (GVZ) in the range width. Walk-forward on real gold 2009-2026
+ * (about 4,300 checks per horizon): a 50/50 blend with GARCH beat GARCH alone in both halves at
+ * 1 week and 1 month (lower interval score, 99% ranges 5-10% narrower, coverage kept). */
+export const IMPLIED_WEIGHT = 0.5;
+/** Implied vol older than this many days is ignored (e.g. the feed stopped). */
+export const IMPLIED_MAX_AGE_DAYS = 7;
+
+/** Per bar: latest implied vol known on that day (annual fraction), or NaN. Causal. */
+export function impliedPerBar(s: Series, implied: readonly ImpliedVol[] | undefined): Float64Array {
+  const out = new Float64Array(s.p.length).fill(NaN);
+  if (!implied || !implied.length) return out;
+  const pts = implied
+    .map((x) => ({ d: typeof x.date === 'string' ? dayNumber(x.date) : null, v: x.pct }))
+    .filter((x): x is { d: number; v: number } => x.d !== null && Number.isFinite(x.v) && x.v > 1 && x.v < 300)
+    .sort((a, b) => a.d - b.d);
+  let j = -1;
+  for (let i = 0; i < s.p.length; i++) {
+    while (j + 1 < pts.length && pts[j + 1].d <= s.day[i]) j++;
+    if (j >= 0 && s.day[i] - pts[j].d <= IMPLIED_MAX_AGE_DAYS) out[i] = pts[j].v / 100;
+  }
+  return out;
+}
 /** Share of up-months in gold's monthly prices 1971-2026 (52.3% of 637 months). Used as the 30-day
  * probability of a rise because no direction signal was proven: the only Bonferroni survivor (price vs
  * 10-month average, 1 month) had no edge over "always up" in 2008-2026 (52% vs 54%) (report section 6). */
@@ -212,7 +236,7 @@ export interface WalkForward {
 }
 
 /** Runs the engine at every bar t using only bars 0..t. The last row is the live forecast. */
-export function walkForward(s: Series, vol: VolPath, h: number, drift = DRIFT_PER_DAY): WalkForward {
+export function walkForward(s: Series, vol: VolPath, h: number, drift = DRIFT_PER_DAY, iv?: Float64Array): WalkForward {
   const n = s.p.length;
   const sd = new Float64Array(n).fill(NaN);
   const q68 = new Float64Array(n).fill(NaN);
@@ -223,8 +247,15 @@ export function walkForward(s: Series, vol: VolPath, h: number, drift = DRIFT_PE
   const indexOfDay = new Map<number, number>();
   for (let i = 0; i < n; i++) indexOfDay.set(s.day[i], i);
   for (let t = 0; t < n; t++) {
-    if (Number.isFinite(vol.v1[t])) sd[t] = Math.sqrt(horizonVariance(vol.v1[t], vol.lr[t], h));
-    outcome[t] = indexOfDay.get(s.day[t] + h) ?? -1;
+    if (Number.isFinite(vol.v1[t])) {
+      const g = horizonVariance(vol.v1[t], vol.lr[t], h);
+      const m = iv && Number.isFinite(iv[t]) ? iv[t] * iv[t] * (h / 365) : NaN;
+      sd[t] = Math.sqrt(Number.isFinite(m) ? (1 - IMPLIED_WEIGHT) * g + IMPLIED_WEIGHT * m : g);
+    }
+    // the bar h days later; for trading-day data (no weekends) the first bar within 3 days after
+    let k = -1;
+    for (let e = 0; e <= 3 && k < 0; e++) k = indexOfDay.get(s.day[t] + h + e) ?? -1;
+    outcome[t] = k;
   }
   // scores that become known when bar k arrives
   const arrivals: number[][] = Array.from({ length: n }, () => []);
@@ -298,7 +329,7 @@ function rangeAt(now: number, sd: number, q68: number, q95: number, q99: number,
  *   variation at all (zero volatility: a stale feed), or when the input is so extreme that a range
  *   would not be a finite number
  */
-export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizons: number[] = [7, 30, 90]): ForecastResult | null {
+export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizons: number[] = [7, 30, 90], implied?: readonly ImpliedVol[]): ForecastResult | null {
   if (!Array.isArray(bars)) return null;
   const s = toSeries(bars);
   const n = s.p.length;
@@ -306,6 +337,7 @@ export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizon
   const now = Number.isFinite(spotUsd) && spotUsd > 0 ? spotUsd : s.p[n - 1];
   const hs = [...new Set((horizons ?? []).filter((h) => Number.isInteger(h) && h >= 1 && h <= 365))];
   const vol = garchPath(s);
+  const iv = impliedPerBar(s, implied);
   const last = n - 1;
   // v1 = 0 means every return so far was exactly 0: a zero-width range would be meaningless.
   if (!Number.isFinite(vol.v1[last]) || !(vol.v1[last] > 0)) return null;
@@ -313,7 +345,7 @@ export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizon
   const ranges: RangeForecast[] = [];
   const scorecard: Scorecard[] = [];
   for (const h of hs) {
-    const wf = walkForward(s, vol, h);
+    const wf = walkForward(s, vol, h, DRIFT_PER_DAY, iv);
     const r = rangeAt(now, wf.sd[last], wf.q68[last], wf.q95[last], wf.q99[last], h);
     if (![r.likelyLow, r.likelyHigh, r.extremeLow, r.extremeHigh, r.sureLow, r.sureHigh].every((x) => Number.isFinite(x))) return null;
     ranges.push(r);

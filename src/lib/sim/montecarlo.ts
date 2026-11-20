@@ -6,8 +6,8 @@
  * Drift = gold's long-run average growth. Results are kept as histograms of log-returns, so a million
  * paths need almost no memory. Pure and deterministic for a given seed (no DOM; runs in a Web Worker).
  */
-import { DRIFT_PER_DAY, GARCH_ALPHA, GARCH_BETA, garchPath, toSeries } from '../forecast/index';
-import type { DailyBar } from '../forecast/types';
+import { DRIFT_PER_DAY, GARCH_ALPHA, GARCH_BETA, garchPath, IMPLIED_WEIGHT, impliedPerBar, toSeries } from '../forecast/index';
+import type { DailyBar, ImpliedVol } from '../forecast/types';
 
 export interface Prepared {
   z: Float64Array; // standardised real daily shocks (mean 0, variance 1)
@@ -15,7 +15,8 @@ export interface Prepared {
   lr: number; // long-run daily variance (variance targeting)
 }
 
-export function prepare(bars: readonly DailyBar[]): Prepared | null {
+/** `implied` (traders' gold volatility, GVZ) is blended 50/50 into tomorrow's variance, as in the engine. */
+export function prepare(bars: readonly DailyBar[], implied?: readonly ImpliedVol[]): Prepared | null {
   const s = toSeries(bars);
   const n = s.p.length;
   if (n < 120) return null;
@@ -31,7 +32,9 @@ export function prepare(bars: readonly DailyBar[]): Prepared | null {
   const mean = zs.reduce((a, b) => a + b, 0) / zs.length;
   const sd = Math.sqrt(zs.reduce((a, b) => a + (b - mean) ** 2, 0) / (zs.length - 1));
   const z = Float64Array.from(zs, (x) => (x - mean) / sd);
-  const v0 = vol.v1[n - 1], lr = vol.lr[n - 1];
+  const iv = implied?.length ? impliedPerBar(s, implied)[n - 1] : NaN;
+  const vg = vol.v1[n - 1], lr = vol.lr[n - 1];
+  const v0 = Number.isFinite(iv) ? (1 - IMPLIED_WEIGHT) * vg + (IMPLIED_WEIGHT * iv * iv) / 365 : vg;
   if (!(v0 > 0) || !(lr > 0)) return null;
   return { z, v0, lr };
 }

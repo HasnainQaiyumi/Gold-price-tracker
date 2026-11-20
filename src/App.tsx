@@ -9,6 +9,7 @@ import { PriceHistory } from './components/PriceHistory';
 import { ProChart } from './components/ProChart';
 import { WhyGoldMoved } from './components/WhyGoldMoved';
 import { SimpleSaver } from './components/SimpleSaver';
+import { PredictionDiary } from './components/PredictionDiary';
 import { Seg } from './components/ui';
 import { evaluateAlerts, sanitizeAlerts, type PriceAlert } from './lib/alerts';
 import { fetchPaxgCandles, type Candle } from './lib/candles';
@@ -19,9 +20,13 @@ import { DEFAULT_ASSUMPTIONS, fmtAed, KARATS, UNITS, usdOzToAed, usdOzToAedPerG 
 import { sanitizeHoldings, type Holding } from './lib/holdings';
 import type { DailyClose, KaratPurity } from './lib/types';
 import { useLocalStorage } from './lib/useLocalStorage';
+import { sanitizeDiary, type Diary } from './lib/diary';
+import { latestImplied, longSeries, sanitizeMarket, type MarketData } from './lib/longHistory';
+import { sanitizeCalibration, type Calibration } from './lib/sim/claims';
 
 const LIVE_MS = 8_000;
 const HISTORY_MS = 30 * 60_000;
+const MARKET_MS = 60 * 60_000; // the data job refreshes these files every 8 hours
 const UNLOCK_KEY = 'gold_unlocked_v1';
 
 export default function App() {
@@ -66,6 +71,10 @@ function Dashboard({ onLock }: { onLock: () => void }) {
   const [feedOk, setFeedOk] = useState(true);
   const [candles, setCandles] = useState<Candle[] | null>(null);
   const busy = useRef(false);
+  const [market, setMarket] = useState<MarketData | null>(null);
+  const [calib, setCalib] = useState<Calibration | null>(null);
+  const [diary, setDiary] = useState<Diary | null>(null);
+  const [marketChecked, setMarketChecked] = useState(false);
 
   const [karat, setKarat] = useLocalStorage<KaratPurity>('gold_karat', 24, (r) => KARATS.find((k) => k === r) ?? 24);
   const [unitIdx, setUnitIdx] = useLocalStorage<number>('gold_unit', 0, (r) => (typeof r === 'number' && r >= 0 && r < UNITS.length ? Math.floor(r) : 0));
@@ -98,6 +107,29 @@ function Dashboard({ onLock }: { onLock: () => void }) {
     }
   }, []);
 
+  // 21-year history, traders' volatility, the 21-year back-test and the prediction diary (same origin, published by the data job).
+  useEffect(() => {
+    let alive = true;
+    const get = (f: string) => fetch(`./data/${f}`, { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const load = () =>
+      Promise.all([get('market.json'), get('calibration.json'), get('diary.json')]).then(([m, c, d]) => {
+        if (!alive) return;
+        const mk = sanitizeMarket(m);
+        if (mk) setMarket(mk);
+        const cb = sanitizeCalibration(c);
+        if (cb) setCalib(cb);
+        const dy = sanitizeDiary(d);
+        if (dy) setDiary(dy);
+        setMarketChecked(true);
+      });
+    load();
+    const t = setInterval(load, MARKET_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
   useEffect(() => {
     refreshLive();
     refreshHistory();
@@ -123,7 +155,17 @@ function Dashboard({ onLock }: { onLock: () => void }) {
     return withLiveSpot(history.map((d) => ({ date: d.date, usd: d.usd * k })), spot.usd, new Date().toISOString());
   }, [history, spot, paxg]);
 
-  const forecast = useMemo(() => (spot && series ? forecastGold(series, spot.usd) : null), [series, spot]);
+  // Forecast history: 21 years (GLD, rescaled to spot) when available, else the ~2-year PAXG series.
+  // Waits for the data files so the simulation does not run twice.
+  const longSer = useMemo(() => {
+    if (!marketChecked || !series || !spot) return null;
+    const l = market ? longSeries(market, spot.usd, new Date().toISOString(), series) : null;
+    return l && l.length > series.length ? l : series;
+  }, [marketChecked, market, series, spot]);
+  const implied = market?.gvz;
+  const impliedNow = latestImplied(market, new Date().toISOString());
+
+  const forecast = useMemo(() => (spot && longSer ? forecastGold(longSer, spot.usd, [7, 30, 90], implied) : null), [longSer, spot, implied]);
 
   const price24 = spot ? usdOzToAedPerG(spot.usd) : null;
   const price = spot ? toAed(spot.usd) : null;
@@ -172,8 +214,9 @@ function Dashboard({ onLock }: { onLock: () => void }) {
 
         <WhyGoldMoved series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
 
-        <RealisticPrediction series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
-        <TopProbabilities series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
+        <RealisticPrediction series={longSer} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} implied={implied} impliedNow={impliedNow} />
+        <TopProbabilities series={longSer} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} implied={implied} calib={longSer && longSer !== series ? calib : null} />
+        <PredictionDiary diary={diary} toAed={toAed} unitText={unitText} />
 
         <div className="grid lg:grid-cols-2 gap-5 items-start">
           <MyGold holdings={holdings} setHoldings={setHoldings} spotUsd={spot?.usd ?? null} />

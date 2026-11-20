@@ -38,6 +38,26 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} # optional, free from aistudio.google.com
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      - name: Keep the last good market data and prediction diary
+        run: |
+          curl -fsS "${{ steps.pages.outputs.base_url }}/data/market.json" -o public/data/market.json || true
+          curl -fsS "${{ steps.pages.outputs.base_url }}/data/diary.json" -o public/data/diary.json || true
+      - name: Restore the prediction diary backup
+        uses: actions/cache/restore@v4
+        with:
+          path: .diary-state
+          key: gold-diary-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: gold-diary-
+      - name: Build 21-year gold history, traders' volatility and the prediction diary
+        run: npx tsx scripts/data/build-market.ts
+        continue-on-error: true
+      - name: Save the prediction diary backup
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .diary-state
+          key: gold-diary-${{ github.run_id }}-${{ github.run_attempt }}
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

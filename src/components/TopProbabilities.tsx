@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DailyBar } from '../lib/forecast/types';
-import type { BacktestRow, Claim, ClaimKind } from '../lib/sim/claims';
+import type { DailyBar, ImpliedVol } from '../lib/forecast/types';
+import type { BacktestRow, Calibration, Claim, ClaimKind } from '../lib/sim/claims';
 import type { SimMessage, SimRequest } from '../workers/sim.worker';
 
 interface Props {
@@ -8,6 +8,8 @@ interface Props {
   spotUsd: number | null;
   toAed: (usd: number) => number;
   unitText: string;
+  implied?: ImpliedVol[];
+  calib?: Calibration | null;
 }
 
 const STANDARD_PATHS = 1_000_000;
@@ -29,7 +31,7 @@ function secondary(c: Claim, money: (usd: number) => string): string {
   }
 }
 
-export function TopProbabilities({ series, spotUsd, toAed, unitText }: Props) {
+export function TopProbabilities({ series, spotUsd, toAed, unitText, implied, calib }: Props) {
   const worker = useRef<Worker | null>(null);
   const runId = useRef(0);
   const last = useRef<{ spot: number; at: number } | null>(null);
@@ -58,7 +60,7 @@ export function TopProbabilities({ series, spotUsd, toAed, unitText }: Props) {
     last.current = { spot: spotUsd, at: Date.now() };
     const id = ++runId.current;
     setRunning({ paths, done: 0 });
-    const req: SimRequest = { id, bars: series, spotUsd, paths };
+    const req: SimRequest = { id, bars: series, spotUsd, paths, implied, calib };
     worker.current.postMessage(req);
   };
 
@@ -121,7 +123,7 @@ export function TopProbabilities({ series, spotUsd, toAed, unitText }: Props) {
                   </div>
                   <div className="mt-3 flex items-baseline gap-2">
                     <span className={`font-display text-2xl font-semibold ${ok ? 'text-[#6fcf97]' : 'text-[#f0cf72]'}`}>{(Math.floor((t.held / t.checks) * 1000) / 10).toFixed(1)}%</span>
-                    <span className="text-[12px] text-[#a39b8a]">came true on past prices ({t.held} of {t.checks} checks)</span>
+                    <span className="text-[12px] text-[#a39b8a]">came true on past prices{result.testedFrom ? ` since ${result.testedFrom.slice(0, 4)}` : ''} ({t.held.toLocaleString('en-US')} of {t.checks.toLocaleString('en-US')} checks)</span>
                   </div>
                   <div className="text-[11px] text-[#7d7667] mt-1">Happened in {(c.probability * 100).toFixed(1)}% of the simulated futures.</div>
                 </div>
@@ -147,7 +149,7 @@ export function TopProbabilities({ series, spotUsd, toAed, unitText }: Props) {
                     <span className="shrink-0 w-14 font-display text-xl font-semibold text-[#6fcf97]">{Math.floor((t.held / t.checks) * 100)}%</span>
                     <span className="min-w-0">
                       <span className="text-[15px] text-[#fbf7ef]">{secondary(c, money)}</span>
-                      <span className="block text-[11px] text-[#7d7667] mt-0.5">Came true {t.held} of {t.checks} times on past prices.</span>
+                      <span className="block text-[11px] text-[#7d7667] mt-0.5">Came true {t.held.toLocaleString('en-US')} of {t.checks.toLocaleString('en-US')} times on past prices{result.testedFrom ? ` since ${result.testedFrom.slice(0, 4)}` : ''}.</span>
                     </span>
                   </li>
                 );
