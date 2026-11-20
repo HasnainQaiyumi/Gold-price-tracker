@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { explainDrawdown, explainFromHigh, explainRange, explainReturns, explainRsi, explainVol, explainVsAvg, overallSummary, type KeyStats } from '../lib/statsExplain';
 import { annualisedVolPct, maxDrawdownPct, returnPct, rsi, smaSeries } from '../lib/goldAnalytics';
 import type { DailyClose } from '../lib/types';
 
@@ -64,17 +65,33 @@ export function PriceHistory({ series, toAed: g, unitText, statsOnly = false }: 
     );
   }
   const hp = hover !== null ? view.pts[hover] : null;
+  const ks: KeyStats = { r1m: calc.r1m, r3m: calc.r3m, r1y: calc.r1y, rsi: calc.rsi, vol: calc.vol, dd: calc.dd, hi: g(calc.hi), lo: g(calc.lo), last: g(calc.last), fromHigh: calc.fromHigh, vs50: calc.vs50, vs200: calc.vs200 };
+  const fmtA = (v: number) => `AED ${v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(0)}`;
+  const why: Record<string, string> = {
+    '1M / 3M / 1Y': explainReturns(ks),
+    'RSI (14)': explainRsi(ks.rsi),
+    'Volatility (30d, annual)': explainVol(ks.vol),
+    'Worst fall (1Y)': explainDrawdown(ks.dd),
+    '1Y high / low (AED)': explainRange(ks, fmtA),
+    'From 1Y high': explainFromHigh(ks.fromHigh),
+    'vs 50-day avg': explainVsAvg(ks.vs50, 50),
+    'vs 200-day avg': explainVsAvg(ks.vs200, 200),
+  };
   const stat = (k: string, v: React.ReactNode) => (
-    <div key={k} className="rounded-lg bg-[#0d0c09] border border-white/[0.08] p-3">
+    <div key={k} className="rounded-lg bg-[#0d0c09] border border-white/[0.08] p-3 flex flex-col">
       <div className="text-[#a39b8a]">{k}</div>
       <div className="text-sm font-semibold font-mono-num text-[#f4efe6] mt-0.5">{v}</div>
+      {statsOnly && why[k] && <p className="mt-2 text-[12px] leading-relaxed text-[#cfc7b6]">{why[k]}</p>}
     </div>
   );
 
   return (
     <section aria-label="Gold price history" className="panel flex flex-col gap-4">
       {statsOnly ? (
-        <h2 className="panel-title">Key numbers</h2>
+        <div>
+          <h2 className="panel-title">Key numbers</h2>
+          {overallSummary(ks) && <p className="mt-2 text-[15px] leading-relaxed text-[#fbf7ef] rounded-xl border border-[#d9a93f]/25 bg-[#1b170e] px-4 py-3">{overallSummary(ks)}</p>}
+        </div>
       ) : (
         <>
       <div className="flex items-center justify-between">
@@ -123,7 +140,7 @@ export function PriceHistory({ series, toAed: g, unitText, statsOnly = false }: 
         {stat('vs 200-day avg', <span className={tone(calc.vs200)}>{pct(calc.vs200)}</span>)}
       </div>
       <div className="text-[11px] text-[#7d7667]">
-        History: daily closes of PAXG (gold-backed token, 1 token = 1 oz, trades 24/7), scaled to match live spot gold. Its price tracks spot within about 0.3%.
+        Where these numbers come from: daily prices of PAXG, a digital token backed by real gold (1 token = 1 ounce). It trades every day of the week and stays within about 0.3% of the real gold price, and we adjust it to match today's live price.
       </div>
     </section>
   );

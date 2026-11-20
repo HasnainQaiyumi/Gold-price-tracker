@@ -171,16 +171,11 @@ export function explainerHtml(x: Explainer, full: boolean): string {
   const drivers = x.drivers
     .map((d) => {
       const color = d.direction === 'up' ? '#6fcf97' : d.direction === 'down' ? '#ef6b6b' : '#a39b8a';
-      const steps = (full ? d.steps : [])
-        .map(
-          (st, i) =>
-            `<tr><td valign="top" style="width:30px;padding:0 0 8px"><div style="width:22px;height:22px;line-height:22px;border-radius:11px;background:#2a2213;border:1px solid #6b5420;color:#f0cf72;font-size:11px;font-weight:700;text-align:center">${i + 1}</div></td><td style="padding:2px 0 8px;font-size:14px;line-height:1.55;color:${i === d.steps.length - 1 ? '#f0cf72' : '#d8d0bf'};${i === d.steps.length - 1 ? 'font-weight:700' : ''}">${esc(st)}</td></tr>`
-        )
-        .join('');
+
       return `<div style="margin-top:12px;padding:16px 18px;background:#0d0c09;border:1px solid #2a261d;border-radius:16px">
 <div style="font-size:15px;font-weight:700;color:#fbf7ef">${d.icon} ${esc(d.name)} <span style="display:inline-block;margin-left:6px;padding:2px 9px;border-radius:999px;font-size:11px;color:${color};background:${color}1f;border:1px solid ${color}55">${esc(dirBadge(d.direction))}</span></div>
 <div style="font-size:14px;line-height:1.65;color:#e8e1d2;margin-top:8px"><span style="color:#a39b8a">In the news: </span>${esc(d.whatHappened)}</div>
-${full ? `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#7d7667;margin:14px 0 8px">How it reaches the gold price</div><table role="presentation" cellpadding="0" cellspacing="0" width="100%">${steps}</table>` : ''}
+${full ? `<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#7d7667;margin:14px 0 8px">How it reaches the gold price</div><div style="font-size:15px;line-height:1.8;color:#e8e1d2">${esc(d.story || d.steps.join('. ') + '.')}</div>` : ''}
 ${d.note ? `<div style="margin-top:8px;padding:9px 12px;border-radius:10px;background:#2a2312;border:1px solid #5c4a1e;font-size:13px;line-height:1.6;color:#f0dca4"><b>But this time:</b> ${esc(d.note)}</div>` : ''}
 ${full ? `<div style="margin-top:10px;font-size:13px;line-height:1.65;color:#cfc7b6"><b style="color:#e8e1d2">💡 Think of it like this:</b> <i>${esc(d.analogy)}</i></div>` : ''}
 </div>`;
