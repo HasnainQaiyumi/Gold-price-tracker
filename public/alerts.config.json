@@ -1,0 +1,10 @@
+{
+  "targets": [
+    { "id": "rise-445", "dir": "above", "aedPerGram24k": 445 },
+    { "id": "fall-400", "dir": "below", "aedPerGram24k": 400 }
+  ],
+  "dailyMovePct": 2,
+  "yearHighLow": true,
+  "trendCross": true,
+  "rearmPct": 1
+}

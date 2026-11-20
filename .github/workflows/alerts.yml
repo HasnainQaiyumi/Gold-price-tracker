@@ -1,0 +1,71 @@
+name: Gold price alerts (email + WhatsApp)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+    - cron: "41 3 1 * *" # monthly keep-alive: stops GitHub pausing these schedules after 60 quiet days
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a test alert now"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gold-alerts
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    if: github.event.schedule == '41 3 1 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Keep both scheduled workflows enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/alerts.yml/enable"
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/deploy.yml/enable"
+
+  check:
+    if: github.event.schedule != '41 3 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - name: Restore alert memory
+        uses: actions/cache/restore@v4
+        with:
+          path: .alert-state
+          key: gold-alert-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: gold-alert-state-
+      - name: Check gold and send alerts
+        run: npx tsx scripts/alerts/run.ts
+        env:
+          ALERT_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test && '1' || '0' }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          ALERT_TARGETS: ${{ secrets.ALERT_TARGETS || vars.ALERT_TARGETS }}
+          ALERT_DAILY_MOVE: ${{ secrets.ALERT_DAILY_MOVE || vars.ALERT_DAILY_MOVE }}
+          DAILY_SUMMARY: ${{ secrets.DAILY_SUMMARY || vars.DAILY_SUMMARY }}
+          DAILY_SUMMARY_HOUR: ${{ secrets.DAILY_SUMMARY_HOUR || vars.DAILY_SUMMARY_HOUR }}
+          WHATSAPP_QUIET_HOURS: ${{ secrets.WHATSAPP_QUIET_HOURS || vars.WHATSAPP_QUIET_HOURS }}
+      - name: Save alert memory
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .alert-state
+          key: gold-alert-state-${{ github.run_id }}-${{ github.run_attempt }}

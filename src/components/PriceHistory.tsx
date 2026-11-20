@@ -13,7 +13,7 @@ const RANGES = [
 const pct = (v: number | null, d = 1) => (v === null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`);
 const tone = (v: number | null) => (v === null ? 'text-[#a39b8a]' : v >= 0 ? 'text-[#6fcf97]' : 'text-[#ef6b6b]');
 
-export function PriceHistory({ series, toAed: g, unitText }: { series: DailyClose[] | null; toAed: (usd: number) => number; unitText: string }) {
+export function PriceHistory({ series, toAed: g, unitText, statsOnly = false }: { series: DailyClose[] | null; toAed: (usd: number) => number; unitText: string; statsOnly?: boolean }) {
   const [range, setRange] = useState(180);
   const [hover, setHover] = useState<number | null>(null);
 
@@ -73,6 +73,10 @@ export function PriceHistory({ series, toAed: g, unitText }: { series: DailyClos
 
   return (
     <section aria-label="Gold price history" className="panel flex flex-col gap-4">
+      {statsOnly ? (
+        <h2 className="panel-title">Key numbers</h2>
+      ) : (
+        <>
       <div className="flex items-center justify-between">
         <h2 className="panel-title">History</h2>
         <div className="flex items-center gap-3">
@@ -106,6 +110,8 @@ export function PriceHistory({ series, toAed: g, unitText }: { series: DailyClos
         <span className="ml-auto font-mono-num">AED {view.min.toFixed(0)}–{view.max.toFixed(0)} · {view.pts[0].date} to {view.pts[view.pts.length - 1].date}</span>
       </div>
 
+        </>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         {stat('1M / 3M / 1Y', <span><span className={tone(calc.r1m)}>{pct(calc.r1m)}</span> / <span className={tone(calc.r3m)}>{pct(calc.r3m)}</span> / <span className={tone(calc.r1y)}>{pct(calc.r1y)}</span></span>)}
         {stat('RSI (14)', <span>{calc.rsi === null ? '—' : calc.rsi.toFixed(0)} <span className="text-[#7d7667]">{calc.rsi === null ? '' : calc.rsi > 70 ? 'overbought' : calc.rsi < 30 ? 'oversold' : 'neutral'}</span></span>)}
