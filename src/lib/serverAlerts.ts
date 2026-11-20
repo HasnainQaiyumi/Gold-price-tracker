@@ -24,6 +24,7 @@ export interface AlertState {
   lastHighDay?: string;
   lastLowDay?: string;
   trendSide?: 'above' | 'below';
+  lastDailyDay?: string; // Dubai date of the last morning summary
 }
 
 export interface Facts {
@@ -42,6 +43,7 @@ export type AlertEvent =
   | { kind: 'yearHigh'; previous: number }
   | { kind: 'yearLow'; previous: number }
   | { kind: 'trend'; side: 'above' | 'below'; sma: number }
+  | { kind: 'daily' }
   | { kind: 'test' };
 
 export const DEFAULT_CONFIG: AlertConfig = {
@@ -89,6 +91,7 @@ export function sanitizeState(raw: unknown): AlertState {
     lastHighDay: day(o.lastHighDay),
     lastLowDay: day(o.lastLowDay),
     trendSide: o.trendSide === 'above' || o.trendSide === 'below' ? o.trendSide : undefined,
+    lastDailyDay: day(o.lastDailyDay),
   };
 }
 
@@ -145,4 +148,75 @@ export function evaluateServerAlerts(cfg: AlertConfig, prev: AlertState, f: Fact
   }
 
   return { events, state };
+}
+
+/* ----------------------------------------------------------------------------------------------
+ * Plain-text settings (GitHub repository variables), e.g. ALERT_TARGETS = "above 445, below 400".
+ * They override the JSON file so the owner never has to edit code.
+ * -------------------------------------------------------------------------------------------- */
+
+export type Channels = 'email' | 'whatsapp' | 'both' | 'off';
+
+export interface NotifySettings {
+  daily: Channels; // morning summary channels
+  dailyHourDubai: number; // 0-23
+  quietHours: [number, number] | null; // WhatsApp silent between these Dubai hours, e.g. [23, 7]
+}
+
+export const DEFAULT_NOTIFY: NotifySettings = { daily: 'email', dailyHourDubai: 8, quietHours: [23, 7] };
+
+/** "above 445, below 400" / "rise 445; fall 400" / "445 up, 400 down" -> target rules. */
+export function parseTargetsText(text: string): TargetRule[] {
+  const out: TargetRule[] = [];
+  for (const part of text.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 20)) {
+    const num = part.match(/\d+(?:\.\d+)?/);
+    if (!num) continue;
+    const v = Number(num[0]);
+    const dir = /\b(above|over|rise|rises|up|high|>)\b|>/.test(part) ? 'above' : /\b(below|under|fall|falls|drop|drops|down|low)\b|</.test(part) ? 'below' : null;
+    if (!dir || !(v >= 1 && v <= 100000)) continue;
+    out.push({ id: `${dir}-${v}`, dir, aedPerGram24k: v });
+  }
+  return out;
+}
+
+const chan = (v: string | undefined, d: Channels): Channels => {
+  const x = (v ?? '').trim().toLowerCase();
+  return x === 'email' || x === 'whatsapp' || x === 'both' || x === 'off' ? x : d;
+};
+
+/** Merge env (repository variables) over the file config. Unknown/malformed values keep defaults. */
+export function settingsFromEnv(env: Record<string, string | undefined>, file: AlertConfig): { config: AlertConfig; notify: NotifySettings } {
+  const config: AlertConfig = { ...file };
+  if (env.ALERT_TARGETS && env.ALERT_TARGETS.trim()) config.targets = parseTargetsText(env.ALERT_TARGETS);
+  const mv = (env.ALERT_DAILY_MOVE ?? '').trim().toLowerCase();
+  if (mv === 'off') config.dailyMovePct = null;
+  else if (mv && Number.isFinite(Number(mv)) && Number(mv) >= 0.1 && Number(mv) <= 50) config.dailyMovePct = Number(mv);
+  const hour = Number((env.DAILY_SUMMARY_HOUR ?? '').trim());
+  const qh = (env.WHATSAPP_QUIET_HOURS ?? '').trim().toLowerCase();
+  const qm = qh.match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+  const notify: NotifySettings = {
+    daily: chan(env.DAILY_SUMMARY, DEFAULT_NOTIFY.daily),
+    dailyHourDubai: Number.isInteger(hour) && hour >= 0 && hour <= 23 && (env.DAILY_SUMMARY_HOUR ?? '').trim() !== '' ? hour : DEFAULT_NOTIFY.dailyHourDubai,
+    quietHours: qh === 'off' ? null : qm && +qm[1] <= 23 && +qm[2] <= 23 ? [+qm[1], +qm[2]] : DEFAULT_NOTIFY.quietHours,
+  };
+  return { config, notify };
+}
+
+/** Dubai is UTC+4 all year (no daylight saving). */
+export function dubaiClock(nowMs: number): { hour: number; date: string } {
+  const d = new Date(nowMs + 4 * 3600e3);
+  return { hour: d.getUTCHours(), date: d.toISOString().slice(0, 10) };
+}
+
+export function inQuietHours(hour: number, q: [number, number] | null): boolean {
+  if (!q) return false;
+  const [a, b] = q;
+  return a === b ? false : a < b ? hour >= a && hour < b : hour >= a || hour < b;
+}
+
+/** Morning summary is due once per Dubai day, at or after the chosen hour. */
+export function dailyDue(state: AlertState, nowMs: number, n: NotifySettings): boolean {
+  if (n.daily === 'off') return false;
+  const c = dubaiClock(nowMs);
+  return c.hour >= n.dailyHourDubai && state.lastDailyDay !== c.date;
 }

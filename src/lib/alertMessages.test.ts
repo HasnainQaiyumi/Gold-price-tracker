@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartSvg, renderEmailHtml, renderSubject, renderWhatsApp, type AlertContext } from './alertMessages';
+import { chartSvg, renderEmailHtml, renderSubject, renderWhatsApp, shortBrief, type AlertContext } from './alertMessages';
 
 const ctx: AlertContext = {
   events: [{ kind: 'target', id: 't', dir: 'above', target: 440 }, { kind: 'move', pct: 2.4 }],
@@ -33,4 +33,15 @@ test('chart svg is well-formed and includes the target line', () => {
   assert.ok(svg.startsWith('<svg') && svg.trim().endsWith('</svg>'));
   assert.match(svg, /Target 440/);
   assert.ok(!/NaN|Infinity/.test(svg));
+});
+
+test('morning summary subject and the why-paragraph in both channels', () => {
+  const brief = 'Gold is down 2.4% this week. Reports say US interest rates may stay high. Gold pays no interest, so high rates make it less attractive. The dollar also got stronger. That makes gold cost more for buyers abroad. People are now watching the next US jobs report.';
+  const d = { ...ctx, events: [{ kind: 'daily' as const }], brief };
+  assert.match(renderSubject(d), /^☀️ Gold today: AED 441\.20\/g \(▲ \+2\.39%\)$/);
+  assert.match(renderWhatsApp(d), /\*Why gold is moving\*/);
+  assert.ok(renderEmailHtml(d).includes('Why gold is moving'));
+  assert.ok(renderEmailHtml({ ...d, brief: '<img src=x onerror=alert(1)>' }).includes('&lt;img'));
+  assert.ok(shortBrief(brief, 20).split(' ').length <= 25);
+  assert.ok(!renderWhatsApp(ctx).includes('Why gold is moving'), 'no brief section when absent');
 });

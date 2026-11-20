@@ -172,19 +172,23 @@ export function alignFactor(candles: Candle[], spotUsd: number | null, nowIso: s
 /**
  * Update (or create) today's candle from the live spot price.
  * - Last candle is today: close = spot, high/low widen to include spot.
- * - Last candle is older: append today's candle opening at the previous close.
- * - Last candle is in the future (clock skew) or spot is not sane: unchanged copy.
+ * - Last candle is yesterday (Coinbase has not opened today's yet): append today's candle
+ *   opening at yesterday's close.
+ * - Last candle is older than yesterday (stale history), in the future (clock skew), or spot
+ *   is not sane: unchanged copy. We never bridge a multi-day hole with one synthetic candle,
+ *   which would show a fake "daily" change spanning several days.
  */
 export function withLiveCandle(candles: Candle[], spotUsd: number | null, nowIso: string): Candle[] {
   const out = candles.map((c) => ({ ...c }));
   const today = isoDay(nowIso);
   if (!saneUsd(spotUsd) || !today || out.length === 0) return out;
   const last = out[out.length - 1];
+  const yesterday = isoDay(Date.parse(`${today}T00:00:00Z`) - DAY_MS);
   if (last.time === today) {
     last.close = spotUsd;
     last.high = Math.max(last.high, spotUsd);
     last.low = Math.min(last.low, spotUsd);
-  } else if (last.time < today) {
+  } else if (last.time === yesterday) {
     out.push({
       time: today,
       open: last.close,

@@ -43,6 +43,11 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          ALERT_TARGETS: ${{ vars.ALERT_TARGETS }}
+          ALERT_DAILY_MOVE: ${{ vars.ALERT_DAILY_MOVE }}
+          DAILY_SUMMARY: ${{ vars.DAILY_SUMMARY }}
+          DAILY_SUMMARY_HOUR: ${{ vars.DAILY_SUMMARY_HOUR }}
+          WHATSAPP_QUIET_HOURS: ${{ vars.WHATSAPP_QUIET_HOURS }}
       - name: Save alert memory
         if: always()
         uses: actions/cache/save@v4

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_CONFIG, evaluateServerAlerts, sanitizeConfig, sanitizeState, type Facts } from './serverAlerts';
+import { dailyDue, DEFAULT_CONFIG, dubaiClock, evaluateServerAlerts, inQuietHours, parseTargetsText, sanitizeConfig, sanitizeState, settingsFromEnv, type Facts } from './serverAlerts';
 
 const facts = (p: number, extra: Partial<Facts> = {}): Facts => ({
   price24: p, prevClose24: 400, high52: 450, low52: 350, sma200: 400, day: '2026-11-20', marketOpen: true, ...extra,
@@ -53,5 +53,38 @@ test('config and state sanitizers reject junk', () => {
   assert.deepEqual(sanitizeConfig(null).targets, []);
   assert.equal(sanitizeConfig({ dailyMovePct: null }).dailyMovePct, null);
   const s = sanitizeState({ armed: { a: true, b: 'no' }, lastMoveDay: 'bad', trendSide: 'sideways' });
-  assert.deepEqual(s, { armed: { a: true }, lastMoveDay: undefined, lastHighDay: undefined, lastLowDay: undefined, trendSide: undefined });
+  assert.deepEqual(s, { armed: { a: true }, lastMoveDay: undefined, lastHighDay: undefined, lastLowDay: undefined, trendSide: undefined, lastDailyDay: undefined });
+});
+
+test('plain-text targets are parsed forgivingly', () => {
+  assert.deepEqual(parseTargetsText('above 445, below 400').map((r) => [r.dir, r.aedPerGram24k]), [['above', 445], ['below', 400]]);
+  assert.deepEqual(parseTargetsText('rise 450.5; falls 390\n> 460').map((r) => [r.dir, r.aedPerGram24k]), [['above', 450.5], ['below', 390], ['above', 460]]);
+  assert.deepEqual(parseTargetsText('hello, 445, sideways 300'), []);
+});
+
+test('settings from repository variables override the file, junk keeps defaults', () => {
+  const file = sanitizeConfig({ targets: [{ dir: 'above', aedPerGram24k: 500 }] });
+  const a = settingsFromEnv({ ALERT_TARGETS: 'below 410', ALERT_DAILY_MOVE: 'off', DAILY_SUMMARY: 'both', DAILY_SUMMARY_HOUR: '9', WHATSAPP_QUIET_HOURS: '22-6' }, file);
+  assert.deepEqual(a.config.targets.map((x) => x.aedPerGram24k), [410]);
+  assert.equal(a.config.dailyMovePct, null);
+  assert.deepEqual(a.notify, { daily: 'both', dailyHourDubai: 9, quietHours: [22, 6] });
+  const b = settingsFromEnv({ DAILY_SUMMARY: 'sms', DAILY_SUMMARY_HOUR: '99', WHATSAPP_QUIET_HOURS: 'nights' }, file);
+  assert.deepEqual(b.config.targets.map((x) => x.aedPerGram24k), [500], 'empty variable keeps file targets');
+  assert.deepEqual(b.notify, { daily: 'email', dailyHourDubai: 8, quietHours: [23, 7] });
+  assert.equal(settingsFromEnv({ WHATSAPP_QUIET_HOURS: 'off' }, file).notify.quietHours, null);
+});
+
+test('Dubai clock, quiet hours and daily summary timing', () => {
+  const t = Date.parse('2026-11-20T03:30:00Z'); // 07:30 Dubai
+  assert.deepEqual(dubaiClock(t), { hour: 7, date: '2026-11-20' });
+  assert.equal(inQuietHours(23, [23, 7]), true);
+  assert.equal(inQuietHours(6, [23, 7]), true);
+  assert.equal(inQuietHours(7, [23, 7]), false);
+  assert.equal(inQuietHours(12, null), false);
+  const n = { daily: 'email' as const, dailyHourDubai: 8, quietHours: null };
+  assert.equal(dailyDue({ armed: {} }, t, n), false, 'before 8am');
+  const t2 = Date.parse('2026-11-20T04:05:00Z'); // 08:05 Dubai
+  assert.equal(dailyDue({ armed: {} }, t2, n), true);
+  assert.equal(dailyDue({ armed: {}, lastDailyDay: '2026-11-20' }, t2, n), false, 'once per day');
+  assert.equal(dailyDue({ armed: {} }, t2, { ...n, daily: 'off' }), false);
 });

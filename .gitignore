@@ -14,3 +14,4 @@ backend/artifacts/
 public/data/
 .playwright-cli/
 .alert-state/
+public/data/brief.json

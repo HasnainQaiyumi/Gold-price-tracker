@@ -59,6 +59,10 @@ export function Alerts({ alerts, setAlerts, price24 }: { alerts: PriceAlert[]; s
         {perm === 'granted' && 'Desktop notifications are on.'}
         {perm === 'denied' && 'Desktop notifications are blocked in your browser; you will still see alerts here.'}
       </p>
+      <p className="text-[10px] text-[#7d7667] mt-2 leading-relaxed">
+        Email and WhatsApp alerts run every 10 minutes even when this page is closed.{' '}
+        <a href="https://github.com/HasnainQaiyumi/Gold-price-tracker/edit/main/public/alerts.config.json" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 text-[#f0cf72]">Change their prices</a>
+      </p>
     </Panel>
   );
 }

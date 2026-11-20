@@ -3,12 +3,15 @@ name: Test & Deploy to GitHub Pages
 on:
   push:
     branches: ["main"]
+  schedule:
+    - cron: "17 */4 * * *" # refresh the "Why gold is moving" paragraph every 4 hours
   workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  models: read # GitHub Models (free) writes the news paragraph
 
 concurrency:
   group: "pages"
@@ -26,6 +29,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - name: Build the "Why gold is moving" brief
+        run: npx tsx scripts/news/build-brief.ts
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -36,28 +36,43 @@ function chanceWords(p: number): string {
   return `about ${best.k} time${best.k === 1 ? '' : 's'} out of ${best.n}`;
 }
 
-/** The chance of landing OUTSIDE a band, as "about 1 time in 20". */
-function rareWords(insideProb: number): string {
+/** The chance of landing OUTSIDE a band, as "about 1 time in 20" (null if the number is unusable). */
+function rareWords(insideProb: number): string | null {
   const out = 1 - insideProb;
-  if (!fin(out) || out <= 0 || out >= 1) return 'rarely';
+  if (!fin(out) || out <= 0 || out >= 1) return null;
   return `about 1 time in ${Math.max(2, Math.round(1 / out))}`;
 }
 
-/** 0..1 -> "about 6 times out of 10". */
-function outOfTen(p: number): string {
-  const k = Math.min(10, Math.max(0, Math.round(p * 10)));
-  return `about ${k} time${k === 1 ? '' : 's'} out of 10`;
+/** A leaning probability (> 0.5) as words. Never says "5 out of 10" (that reads as a coin flip)
+ * and never "10 out of 10" (that reads as a certainty). */
+function leanWords(p: number): string {
+  const k = Math.round(p * 10);
+  if (k <= 5) return 'slightly more than half the time';
+  const kk = Math.min(9, k);
+  return `about ${kk} times out of 10`;
+}
+
+/** Split an engine sentence joined with semicolons into short separate sentences. */
+function shortSentences(text: string): string {
+  return text
+    .split(/;\s+|,\s+(?=so\s)/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .map((s) => (/[.!?]$/.test(s) ? s : `${s}.`))
+    .join(' ');
 }
 
 const per100 = (p: number) => Math.round(Math.min(1, Math.max(0, p)) * 100);
 
 /** The method name, translated into everyday words. */
-function methodInWords(model: string): string[] {
+function methodInWords(model: string): { parts: string[]; calibrated: boolean } {
   const m = (model || '').toLowerCase();
   const parts: string[] = [];
   if (m.includes('garch') || m.includes('vol')) parts.push('watching how jumpy the price has been lately');
-  if (m.includes('conformal') || m.includes('calibrat')) parts.push('checking itself against real past results');
-  return parts;
+  const calibrated = m.includes('conformal') || m.includes('calibrat');
+  if (calibrated) parts.push('checking itself against real past results');
+  return { parts, calibrated };
 }
 
 function validRange(r: RangeForecast): boolean {
@@ -120,10 +135,11 @@ function RangeCard({ r, toAed, scale }: { r: RangeForecast; toAed: (usd: number)
   const lo = aed(r.likelyLow);
   const hi = aed(r.likelyHigh);
   const today = aed(r.now);
-  const rareLo = fmtShort(toAed(r.extremeLow));
-  const rareHi = fmtShort(toAed(r.extremeHigh));
+  const rareLo = aed(r.extremeLow);
+  const rareHi = aed(r.extremeHigh);
   const likelyWords = chanceWords(r.likelyProb);
   const rare = rareWords(r.extremeProb);
+  const outsideWords = rare ? `happens ${1 - r.extremeProb <= 0.1 ? 'only ' : ''}${rare}` : 'is rare';
 
   const pos = (v: number) => ((v - scale.min) / (scale.max - scale.min)) * 100;
   const zoneL = pos(r.likelyLow);
@@ -131,8 +147,8 @@ function RangeCard({ r, toAed, scale }: { r: RangeForecast; toAed: (usd: number)
   const nowX = pos(r.now);
 
   const summary =
-    `In ${label}: most likely between ${lo} and ${hi} (${likelyWords}). Today: ${today}. ` +
-    `Rarely, ${rare}, it ends outside AED ${rareLo} to ${rareHi}.`;
+    `Number line. Today: ${today}. Shaded part, where gold ends up after ${label} ${likelyWords}: ${lo} to ${hi}. ` +
+    `Faint part: ${rareLo} to ${rareHi}. Ending outside it ${outsideWords}.`;
 
   return (
     <li className="rounded-[14px] bg-[#0d0c09] border border-white/[0.06] px-4 pt-4 pb-3.5">
@@ -158,7 +174,7 @@ function RangeCard({ r, toAed, scale }: { r: RangeForecast; toAed: (usd: number)
           {/* Track: faint = rare territory (outer range), shaded = most likely */}
           <div className="absolute inset-x-0 top-[26px] h-[6px] rounded-full bg-white/[0.05]" />
           <div
-            className="absolute top-[26px] h-[6px] rounded-full bg-[#d9a93f]/15"
+            className="absolute top-[26px] h-[6px] rounded-full bg-[#d9a93f]/25"
             style={{ left: `${pos(r.extremeLow)}%`, width: `${Math.max(pos(r.extremeHigh) - pos(r.extremeLow), 0.5)}%` }}
           />
           <div
@@ -173,11 +189,11 @@ function RangeCard({ r, toAed, scale }: { r: RangeForecast; toAed: (usd: number)
       </div>
 
       <p className="mt-1 text-[12px] leading-relaxed text-[#a39b8a]">
-        The shaded part is where gold ends up {likelyWords}.{' '}
-        <span className="text-[#a39b8a]">
-          Rarely ({rare}) it goes outside{' '}
-          <span className="font-mono-num text-[#f4efe6] whitespace-nowrap">AED {rareLo} – {rareHi}</span>.
-        </span>
+        The shaded part is where gold ends up after {label}, {likelyWords}.{' '}
+        The faint part runs from{' '}
+        <span className="font-mono-num text-[#f4efe6] whitespace-nowrap">{rareLo}</span> to{' '}
+        <span className="font-mono-num text-[#f4efe6] whitespace-nowrap">{rareHi}</span>.{' '}
+        Ending outside it {outsideWords}.
       </p>
     </li>
   );
@@ -185,7 +201,11 @@ function RangeCard({ r, toAed, scale }: { r: RangeForecast; toAed: (usd: number)
 
 function DirectionBox({ direction }: { direction: ForecastResult['direction'] }) {
   const pUp = fin(direction?.probabilityUp) ? Math.min(1, Math.max(0, direction.probabilityUp)) : null;
-  const proven = !!direction?.significant && direction.label !== 'none' && pUp !== null;
+  // A lean is shown only if it is proven AND its number agrees with its label (up needs > 0.5).
+  const proven =
+    !!direction?.significant && pUp !== null &&
+    ((direction.label === 'up' && pUp > 0.5) || (direction.label === 'down' && pUp < 0.5));
+  const reason = typeof direction?.reason === 'string' && direction.reason.trim() ? shortSentences(direction.reason) : '';
 
   if (!proven) {
     return (
@@ -195,7 +215,7 @@ function DirectionBox({ direction }: { direction: ForecastResult['direction'] })
           <h3 className="font-display text-[1.05rem] font-semibold text-[#fbf7ef]">Up or down? It's a coin flip.</h3>
         </div>
         <p className="mt-2 text-[13px] leading-relaxed text-[#a39b8a]">
-          {direction?.reason || 'Nobody can reliably tell whether gold goes up or down next, so we do not guess.'}
+          {(!direction?.significant && reason) || 'Nobody can reliably tell whether gold goes up or down next. So we do not guess.'}
         </p>
         <p className="mt-2 text-[12px] leading-relaxed text-[#a39b8a]">
           That is why the ranges above stretch both ways from today.
@@ -206,31 +226,37 @@ function DirectionBox({ direction }: { direction: ForecastResult['direction'] })
 
   const up = direction.label === 'up';
   const p = up ? pUp : 1 - pUp;
+  const lean = p >= 0.6 ? 'More likely' : 'A little more likely';
   return (
     <div className="rounded-[14px] border border-white/[0.06] bg-[#0d0c09] p-4">
       <h3 className="font-display text-[1.05rem] font-semibold text-[#fbf7ef]">
         Up or down?{' '}
         <span className={up ? 'text-[#6fcf97]' : 'text-[#ef6b6b]'}>
-          {up ? 'A little more likely up' : 'A little more likely down'}
+          {lean} {up ? 'up' : 'down'}
         </span>
       </h3>
       <p className="mt-2 text-[13px] leading-relaxed text-[#f4efe6]">
-        Over the next month, our tests say gold goes {up ? 'up' : 'down'} {outOfTen(p)}.
+        Over the next month, our tests say gold goes {up ? 'up' : 'down'} {leanWords(p)}.
       </p>
-      {direction.reason && <p className="mt-2 text-[12px] leading-relaxed text-[#a39b8a]">{direction.reason}</p>}
+      {reason && <p className="mt-2 text-[12px] leading-relaxed text-[#a39b8a]">{reason}</p>}
       <p className="mt-2 text-[12px] leading-relaxed text-[#a39b8a]">That still leaves plenty of room for the opposite to happen.</p>
     </div>
   );
 }
 
-function ScoreBar({ hit, aim }: { hit: number; aim: number }) {
+function ScoreBar({ hit, aim }: { hit: number; aim: number | null }) {
   return (
     <div aria-hidden className="relative h-[8px] flex-1 min-w-[80px] rounded-full bg-white/[0.08]">
       <div className="absolute inset-y-0 left-0 rounded-full bg-[#d9a93f]/75" style={{ width: `${hit}%` }} />
-      <div className="absolute -top-[3px] h-[14px] w-[2px] -translate-x-1/2 rounded-full bg-[#fbf7ef]" style={{ left: `${aim}%` }} />
+      {aim !== null && (
+        <div className="absolute -top-[3px] h-[14px] w-[2px] -translate-x-1/2 rounded-full bg-[#fbf7ef]" style={{ left: `${aim}%` }} />
+      )}
     </div>
   );
 }
+
+/** Points of difference (out of 100) beyond which a past hit rate is called out in words. */
+const OFF_BY = 5;
 
 function ScorecardBox({ scorecard, ranges }: { scorecard: Scorecard[]; ranges: RangeForecast[] }) {
   const rows = scorecard
@@ -251,20 +277,40 @@ function ScorecardBox({ scorecard, ranges }: { scorecard: Scorecard[]; ranges: R
   const leadAim = aimFor(lead.horizonDays);
   const leadRareAim = rareAimFor(lead.horizonDays);
 
+  // Horizons whose past hit rate is clearly off target, said in plain words (honest about misses).
+  const offTarget = rows.flatMap((s) => {
+    const aimP = aimFor(s.horizonDays);
+    if (aimP === null) return [];
+    const hit = per100(s.likelyHitRate);
+    const aim = per100(aimP);
+    const name = horizonLabel(s.horizonDays);
+    if (hit < aim - OFF_BY) {
+      return [`For ${name} we were right less often than we aim (${hit} vs ${aim} times out of 100). So that shaded part may be too narrow.`];
+    }
+    if (hit > aim + OFF_BY) {
+      return [`For ${name} we were right more often than we aim (${hit} vs ${aim} times out of 100). So that shaded part may be wider than needed.`];
+    }
+    return [];
+  });
+
   return (
     <div className="rounded-[14px] border border-white/[0.06] bg-[#0d0c09] p-4">
       <h3 className="font-display text-[1.05rem] font-semibold text-[#fbf7ef]">How often were we right?</h3>
       <p className="mt-2 text-[13px] leading-relaxed text-[#f4efe6]">
-        We replayed this on {lead.samples.toLocaleString('en-US')} past days, each time using only prices known on that day.
-        For the {horizonLabel(lead.horizonDays).replace(' ', '-').replace(/s$/, '')} range, the price ended inside our "most likely" range{' '}
+        We replayed this on {lead.samples.toLocaleString('en-US')} past days. Each time we used only prices known on that day.{' '}
+        For {horizonLabel(lead.horizonDays)} ahead, the price landed in the shaded part{' '}
         <span className="font-semibold text-[#f0cf72]">{per100(lead.likelyHitRate)} times out of 100</span>
         {leadAim !== null && <> (we aim for about {per100(leadAim)})</>}.
         {fin(lead.extremeHitRate) && leadRareAim !== null && (
-          <> It stayed inside the wider range {per100(lead.extremeHitRate)} times out of 100 (we aim for about {per100(leadRareAim)}).</>
+          <>
+            {' '}It ended outside the faint part {per100(1 - lead.extremeHitRate)} times out of 100 (we aim for about{' '}
+            {per100(1 - leadRareAim)}).
+          </>
         )}
       </p>
 
-      <ul className="mt-3 flex flex-col gap-2.5">
+      <p className="mt-3 text-[12px] text-[#a39b8a]">Times out of 100 the price landed in the shaded part:</p>
+      <ul className="mt-2 flex flex-col gap-2.5">
         {rows.map((s) => {
           const hit = per100(s.likelyHitRate);
           const aimP = aimFor(s.horizonDays);
@@ -274,10 +320,10 @@ function ScorecardBox({ scorecard, ranges }: { scorecard: Scorecard[]; ranges: R
             <li
               key={s.horizonDays}
               className="flex items-center gap-3 text-[12px]"
-              aria-label={`${name}: inside the most likely range ${hit} times out of 100${aim !== null ? `, aiming for about ${aim}` : ''}, checked on ${s.samples} past days.`}
+              aria-label={`${name}: landed in the shaded part ${hit} times out of 100${aim !== null ? `, we aim for about ${aim}` : ''}. Checked on ${s.samples.toLocaleString('en-US')} past days.`}
             >
               <span className="w-[62px] shrink-0 text-[#a39b8a]">{name}</span>
-              {aim !== null ? <ScoreBar hit={hit} aim={aim} /> : <ScoreBar hit={hit} aim={hit} />}
+              <ScoreBar hit={hit} aim={aim} />
               <span className="shrink-0 text-right font-mono-num text-[#f4efe6] whitespace-nowrap">
                 {hit}<span className="text-[#a39b8a]"> of 100</span>
               </span>
@@ -285,8 +331,17 @@ function ScorecardBox({ scorecard, ranges }: { scorecard: Scorecard[]; ranges: R
           );
         })}
       </ul>
+      {offTarget.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1 text-[12px] leading-relaxed text-[#f4efe6]">
+          {offTarget.map((t) => (
+            <p key={t}>{t}</p>
+          ))}
+        </div>
+      )}
       <p className="mt-3 text-[11px] leading-relaxed text-[#a39b8a]">
-        Gold bar = how often the price ended inside our "most likely" range. White mark = what we aim for. Neighbouring past days share a lot of the same moves, so treat this as a rough check, not a guarantee.
+        Gold bar: how often it landed in the shaded part. White line: what we aim for.{' '}
+        Nearby days share many of the same price moves. Some settings were also tuned on these same past prices.{' '}
+        So treat this as a rough check, not a guarantee.
       </p>
     </div>
   );
@@ -298,7 +353,16 @@ function ScorecardBox({ scorecard, ranges }: { scorecard: Scorecard[]; ranges: R
 
 const TITLE = 'Where could the price be?';
 
-export function Outlook({ result, toAed, unitText }: { result: ForecastResult | null; toAed: (usd: number) => number; unitText: string }) {
+export function Outlook({
+  result, toAed, unitText, karat,
+}: {
+  result: ForecastResult | null;
+  toAed: (usd: number) => number;
+  unitText: string;
+  /** Optional: the karat toAed converts to, so the price label says which gold it is. */
+  karat?: number;
+}) {
+  const priceNote = `Prices in AED ${unitText}${fin(karat) && karat > 0 ? ` of ${karat}K gold` : ''}.`;
   const ranges = (result?.ranges ?? []).filter(validRange).sort((a, b) => a.days - b.days);
 
   if (!result || ranges.length === 0) {
@@ -317,13 +381,16 @@ export function Outlook({ result, toAed, unitText }: { result: ForecastResult | 
 
   const method = methodInWords(result.model);
   const scale = sharedScale(ranges);
-  const directionProven = !!result.direction?.significant && result.direction.label !== 'none' && fin(result.direction.probabilityUp);
+  const d = result.direction;
+  const directionProven =
+    !!d?.significant && fin(d.probabilityUp) &&
+    ((d.label === 'up' && d.probabilityUp > 0.5) || (d.label === 'down' && d.probabilityUp < 0.5));
 
   return (
     <Panel title={TITLE}>
       <p className="-mt-1 text-[14px] leading-relaxed text-[#a39b8a]">
-        Nobody knows the future, but gold usually stays inside these ranges.
-        <span className="block text-[12px] mt-0.5">Prices in AED {unitText}.</span>
+        Nobody knows the future. But gold usually stays inside these ranges.
+        <span className="block text-[12px] mt-0.5">{priceNote}</span>
       </p>
 
       <ul className="mt-4 flex flex-col gap-3">
@@ -344,18 +411,19 @@ export function Outlook({ result, toAed, unitText }: { result: ForecastResult | 
         </summary>
         <div className="mt-2 flex flex-col gap-2 text-[13px] leading-relaxed text-[#a39b8a]">
           <p>
-            {method.length > 0
-              ? `Our method works by ${method.join(', then ')}.`
+            {method.parts.length > 0
+              ? `Our method works by ${method.parts.join(', then ')}.`
               : 'Our method looks only at gold’s real past prices.'}{' '}
-            When gold has been calm the ranges get narrower, and when it has been jumpy they get wider.
+            When gold has been calm, the ranges get narrower. When it has been jumpy, they get wider.
           </p>
+          {method.calibrated && (
+            <p>
+              We also replayed the method on many past days. The ranges are stretched or shrunk so they come true about as often as we say.
+            </p>
+          )}
           <p>
-            We replay the same method on many past days and stretch or shrink the ranges until they came true about as often as we say.
-          </p>
-          <p>
-            {directionProven
-              ? 'These are ranges, not promises: surprise news can push gold outside them, and a lean up or down is only a lean.'
-              : 'These are ranges, not promises: surprise news can push gold outside them, and nothing here says which way it will go.'}
+            These are ranges, not promises. Surprise news can push gold outside them.{' '}
+            {directionProven ? 'A lean up or down is only a lean.' : 'Nothing here says which way it will go.'}
           </p>
         </div>
       </details>

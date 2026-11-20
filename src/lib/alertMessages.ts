@@ -10,6 +10,7 @@ export interface AlertContext {
   quoteAt: string; // ISO
   siteUrl: string;
   configUrl: string;
+  brief?: string | null; // the latest "Why gold is moving" paragraph, if fresh
 }
 
 const TOLA_G = 11.6638;
@@ -40,6 +41,8 @@ export function describe(e: AlertEvent, price24: number): { title: string; line:
       return e.side === 'above'
         ? { emoji: '↗️', title: 'Crossed above its long-term average', line: `Gold (${p}) moved above its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning up. It is not a guarantee.` }
         : { emoji: '↘️', title: 'Crossed below its long-term average', line: `Gold (${p}) moved below its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning down. It is not a guarantee.` };
+    case 'daily':
+      return { emoji: '☀️', title: 'Your morning gold briefing', line: `24K gold is ${p} this morning.` };
     case 'test':
       return { emoji: '✅', title: 'Test alert: everything works', line: `Your gold alerts are set up correctly. Gold is ${p} right now.` };
   }
@@ -47,8 +50,25 @@ export function describe(e: AlertEvent, price24: number): { title: string; line:
 
 export function renderSubject(ctx: AlertContext): string {
   const first = describe(ctx.events[0], ctx.price24);
+  if (ctx.events.length === 1 && ctx.events[0].kind === 'daily') {
+    const chg = ctx.prevClose24 ? (ctx.price24 / ctx.prevClose24 - 1) * 100 : null;
+    return `☀️ Gold today: AED ${aed(ctx.price24)}/g${chg !== null ? ` (${chg >= 0 ? '▲' : '▼'} ${signPct(chg)})` : ''}`;
+  }
   const more = ctx.events.length > 1 ? ` (+${ctx.events.length - 1} more)` : '';
   return `${first.emoji} Gold ${aed(ctx.price24)} AED/g · ${first.title}${more}`;
+}
+
+/** First few sentences of the brief, so WhatsApp stays readable on a phone. */
+export function shortBrief(text: string, maxWords = 75): string {
+  const out: string[] = [];
+  let n = 0;
+  for (const sent of text.split(/(?<=[.!?])\s+/)) {
+    const w = sent.split(' ').length;
+    if (out.length && n + w > maxWords) break;
+    out.push(sent);
+    n += w;
+  }
+  return out.join(' ');
 }
 
 export function renderWhatsApp(ctx: AlertContext): string {
@@ -62,6 +82,7 @@ export function renderWhatsApp(ctx: AlertContext): string {
     `*AED ${aed(ctx.price24)}/g* (24K)${chg !== null ? `  ${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today` : ''}`,
     '',
     ...lines,
+    ...(ctx.brief ? ['', `📰 *Why gold is moving*`, shortBrief(ctx.brief)] : []),
     '',
     `22K: AED ${aed(ctx.price24 * (22 / 24))}/g · Tola 24K: AED ${aed(ctx.price24 * TOLA_G, 0)}`,
     `🕒 ${dubaiTime(ctx.quoteAt)}`,
@@ -142,6 +163,7 @@ export function renderEmailHtml(ctx: AlertContext): string {
 ${cell('22K per gram', `AED ${aed(ctx.price24 * (22 / 24))}`)}${cell('24K per tola', `AED ${aed(ctx.price24 * TOLA_G, 0)}`)}${cell('24K per ounce', `AED ${aed(ctx.price24 * OZ_G, 0)}`)}
 </tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px">${items}</table>
+${ctx.brief ? `<div style="margin-top:18px;padding:16px 18px;background:#0d0c09;border:1px solid #2a261d;border-radius:14px"><div style="font-size:12px;color:#d9a93f;font-weight:700;letter-spacing:.06em;text-transform:uppercase">📰 Why gold is moving</div><div style="font-size:14px;line-height:1.7;color:#e8e1d2;margin-top:8px">${esc(ctx.brief)}</div></div>` : ''}
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:22px"><tr><td style="border-radius:12px;background:#d9a93f"><a href="${esc(ctx.siteUrl)}" style="display:inline-block;padding:13px 22px;color:#1a1405;font-weight:800;font-size:14px;text-decoration:none">Open the Gold app →</a></td></tr></table>
 </td></tr>
 <tr><td style="padding:16px 8px;font-size:11px;line-height:1.6;color:#7d7667">Spot price of pure gold; shops add making charges and a premium. Not financial advice.<br>Change or stop alerts: <a href="${esc(ctx.configUrl)}" style="color:#d9a93f">edit your alert settings</a>.</td></tr>

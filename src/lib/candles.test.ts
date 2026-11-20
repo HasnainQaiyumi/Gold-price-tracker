@@ -214,6 +214,21 @@ test('withLiveCandle: insane spot, empty input, bad clock or future candle -> un
   assert.deepEqual(withLiveCandle([], 3540, '2026-11-20T09:00:00Z'), []);
   assert.deepEqual(withLiveCandle(G, 3540, 'not a date'), G);
   assert.deepEqual(withLiveCandle(G, 3540, '2026-11-18T09:00:00Z'), G);
+  // Stale history (last candle 3 days old): do not bridge the hole with one fake candle.
+  assert.deepEqual(withLiveCandle(G, 3540, '2026-11-22T09:00:00Z'), G);
+});
+
+test('withLiveCandle: day boundaries are UTC, including month/year rollover', () => {
+  const nye = [c('2026-12-31', 3500, 3520, 3490, 3510)];
+  const out = withLiveCandle(nye, 3530, '2027-01-01T00:00:05Z');
+  assert.equal(out.length, 2);
+  assert.equal(out[1].time, '2027-01-01');
+  // 23:59 in UTC-5 is already the next UTC day; an offset ISO string still maps to UTC.
+  assert.equal(withLiveCandle(nye, 3530, '2026-12-31T23:59:00-05:00')[1].time, '2027-01-01');
+  // 03:00 in UTC+4 (Dubai) is still the previous UTC day: update in place.
+  const dxb = withLiveCandle(nye, 3530, '2027-01-01T03:00:00+04:00');
+  assert.equal(dxb.length, 1);
+  assert.equal(dxb[0].close, 3530);
 });
 
 test('prepareCandles aligns history to spot then patches today', () => {
@@ -255,7 +270,7 @@ test('isSaneUsd', () => {
 });
 
 test('toDisplay drops rows the converter turns non-finite', () => {
-  const d = toDisplay(SAMPLE, (usd) => (usd === 100 ? NaN : usd));
+  const d = toDisplay(SAMPLE, (usd) => (usd === 95 ? NaN : usd)); // only SAMPLE[0] has a 95
   assert.deepEqual(d.map((x) => x.time), ['2026-11-18', '2026-11-19']);
 });
 

@@ -5,10 +5,14 @@ import { GoldNow } from './components/GoldNow';
 import { MyGold } from './components/MyGold';
 import { Outlook } from './components/Outlook';
 import { PriceHistory } from './components/PriceHistory';
+import { ProChart } from './components/ProChart';
+import { WhyGoldMoved } from './components/WhyGoldMoved';
 import { SimpleSaver } from './components/SimpleSaver';
 import { Seg } from './components/ui';
 import { evaluateAlerts, sanitizeAlerts, type PriceAlert } from './lib/alerts';
-import { fetchPaxg, fetchPaxgHistory, fetchSpot, type Quote } from './lib/feed';
+import { fetchPaxgCandles, type Candle } from './lib/candles';
+import { fetchPaxg, fetchSpot, type Quote } from './lib/feed';
+import { forecastGold } from './lib/forecast';
 import { withLiveSpot } from './lib/goldAnalytics';
 import { DEFAULT_ASSUMPTIONS, fmtAed, KARATS, UNITS, usdOzToAed, usdOzToAedPerG } from './lib/goldPricing';
 import { sanitizeHoldings, type Holding } from './lib/holdings';
@@ -59,7 +63,7 @@ function Dashboard({ onLock }: { onLock: () => void }) {
   const [spot, setSpot] = useState<Quote | null>(null);
   const [paxg, setPaxg] = useState<Quote | null>(null);
   const [feedOk, setFeedOk] = useState(true);
-  const [history, setHistory] = useState<DailyClose[] | null>(null);
+  const [candles, setCandles] = useState<Candle[] | null>(null);
   const busy = useRef(false);
 
   const [karat, setKarat] = useLocalStorage<KaratPurity>('gold_karat', 24, (r) => KARATS.find((k) => k === r) ?? 24);
@@ -87,7 +91,7 @@ function Dashboard({ onLock }: { onLock: () => void }) {
 
   const refreshHistory = useCallback(async () => {
     try {
-      setHistory(await fetchPaxgHistory());
+      setCandles(await fetchPaxgCandles());
     } catch {
       /* keep previous history if any; never fabricate */
     }
@@ -107,6 +111,9 @@ function Dashboard({ onLock }: { onLock: () => void }) {
     };
   }, [refreshLive, refreshHistory]);
 
+  // Daily closes from the same PAXG candles the chart uses (one download serves both).
+  const history = useMemo<DailyClose[] | null>(() => (candles && candles.length >= 90 ? candles.map((c) => ({ date: c.time, usd: c.close })) : null), [candles]);
+
   // History is PAXG; scale it to live spot so levels line up (PAXG-vs-spot basis is ~0.3%).
   const series = useMemo(() => {
     if (!history || !spot) return null;
@@ -114,6 +121,8 @@ function Dashboard({ onLock }: { onLock: () => void }) {
     const k = spot.usd / ref;
     return withLiveSpot(history.map((d) => ({ date: d.date, usd: d.usd * k })), spot.usd, new Date().toISOString());
   }, [history, spot, paxg]);
+
+  const forecast = useMemo(() => (spot && series ? forecastGold(series, spot.usd) : null), [series, spot]);
 
   const price24 = spot ? usdOzToAedPerG(spot.usd) : null;
   const price = spot ? toAed(spot.usd) : null;
@@ -160,15 +169,17 @@ function Dashboard({ onLock }: { onLock: () => void }) {
       <main className="max-w-[1100px] w-full mx-auto px-4 md:px-6 py-6 flex flex-col gap-5">
         <GoldNow spot={spot} paxg={paxg} feedOk={feedOk} series={series} toAed={toAed} unitText={unitText} karat={karat} onRefresh={refreshLive} />
 
+        <WhyGoldMoved series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
+
+        <Outlook result={forecast} toAed={toAed} unitText={unitText} karat={karat} />
+
         <div className="grid lg:grid-cols-2 gap-5 items-start">
-          {spot && <Outlook spotUsd={spot.usd} series={series} toAed={toAed} unitText={unitText} />}
-          <div className="flex flex-col gap-5">
-            <MyGold holdings={holdings} setHoldings={setHoldings} spotUsd={spot?.usd ?? null} />
-            <Alerts alerts={alerts} setAlerts={setAlerts} price24={price24} />
-          </div>
+          <MyGold holdings={holdings} setHoldings={setHoldings} spotUsd={spot?.usd ?? null} />
+          <Alerts alerts={alerts} setAlerts={setAlerts} price24={price24} />
         </div>
 
-        <PriceHistory series={series} toAed={toAed} unitText={unitText} />
+        <ProChart candles={candles} spotUsd={spot?.usd ?? null} paxgUsd={paxg?.usd ?? null} toAed={toAed} unitText={unitText} />
+        <PriceHistory series={series} toAed={toAed} unitText={unitText} statsOnly />
 
         {spot && closes30 && (
           <details>
