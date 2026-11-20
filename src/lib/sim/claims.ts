@@ -3,7 +3,7 @@
  * really happened at past dates (walk-forward: only data known at each date is used).
  * Focus: next week and next month at 99%. Each statement's level is self-calibrated before every run.
  */
-import type { DailyBar } from '../forecast/types';
+import type { DailyBar, ImpliedVol } from '../forecast/types';
 import { prepare, quantile, shareAbove, shareBelow, simulate, type SimResult } from './montecarlo';
 
 export type ClaimKind = 'week' | 'month' | 'floor7' | 'floor30' | 'ceiling30';
@@ -57,13 +57,13 @@ export function claimHeld(c: Claim, startDay: number, after: { day: number; usd:
 export type Ladder = Record<ClaimKind, { target: number; checks: number; held: number }[]>;
 
 /** Walk-forward back-test of every statement at every level on its ladder. Causal. */
-export function backtestLadder(bars: readonly DailyBar[], paths = 3000, stepDays = 3, minHistory = 200): Ladder {
+export function backtestLadder(bars: readonly DailyBar[], paths = 3000, stepDays = 3, minHistory = 200, implied?: readonly ImpliedVol[]): Ladder {
   const sorted = [...bars].filter((b) => b.usd > 0).sort((a, b) => (a.date < b.date ? -1 : 1));
   const day = (d: string) => Math.round(Date.parse(`${d}T00:00:00Z`) / 86400e3);
   const out = Object.fromEntries(KINDS.map((k) => [k, LADDERS[k].map((target) => ({ target, checks: 0, held: 0 }))])) as Ladder;
   const rungs = Math.max(...KINDS.map((k) => LADDERS[k].length));
   for (let i = minHistory; i < sorted.length - 7; i += stepDays) {
-    const prep = prepare(sorted.slice(0, i + 1));
+    const prep = prepare(sorted.slice(0, i + 1), implied);
     if (!prep) continue;
     const sim = simulate(prep, paths, [7, 30], 1000 + i);
     const startDay = day(sorted[i].date);
@@ -94,4 +94,27 @@ export function chooseTargets(l: Ladder, minChecks = 30): { targets: Record<Clai
     tested.push({ kind: k, checks: pick.checks, held: pick.held, target: pick.target });
   }
   return { targets, tested };
+}
+
+/** Back-test result published by the 8-hourly data job (21 years of history; too slow for a phone). */
+export interface Calibration { generatedAt: string; fromDate: string; targets: Record<ClaimKind, number>; tested: BacktestRow[] }
+
+/** Validates ./data/calibration.json (untrusted). Only levels from the ladders are accepted. */
+export function sanitizeCalibration(raw: unknown): Calibration | null {
+  const o = (raw && typeof raw === 'object' ? raw : null) as Record<string, unknown> | null;
+  if (!o || typeof o.generatedAt !== 'string' || Number.isNaN(Date.parse(o.generatedAt)) || typeof o.fromDate !== 'string') return null;
+  const t = (o.targets ?? {}) as Record<string, unknown>;
+  const targets = {} as Record<ClaimKind, number>;
+  for (const k of KINDS) {
+    if (typeof t[k] !== 'number' || !LADDERS[k].includes(t[k] as number)) return null;
+    targets[k] = t[k] as number;
+  }
+  const tested: BacktestRow[] = [];
+  for (const r of Array.isArray(o.tested) ? o.tested : []) {
+    const x = (r ?? {}) as Record<string, unknown>;
+    const ok = KINDS.includes(x.kind as ClaimKind) && [x.checks, x.held, x.target].every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0) && (x.held as number) <= (x.checks as number);
+    if (ok) tested.push({ kind: x.kind as ClaimKind, checks: x.checks as number, held: x.held as number, target: x.target as number });
+  }
+  if (tested.length !== KINDS.length) return null;
+  return { generatedAt: o.generatedAt, fromDate: o.fromDate.slice(0, 10), targets, tested };
 }

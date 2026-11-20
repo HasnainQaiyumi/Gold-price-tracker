@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { LONG_RUN_GROWTH_PCT_PER_YEAR, realisticPath, trackRecord } from '../lib/forecast/realistic';
-import type { DailyBar } from '../lib/forecast/types';
+import type { DailyBar, ImpliedVol } from '../lib/forecast/types';
 import { Panel } from './ui';
 
 interface Props {
@@ -8,6 +8,8 @@ interface Props {
   spotUsd: number | null;
   toAed: (usd: number) => number;
   unitText: string;
+  implied?: ImpliedVol[];
+  impliedNow?: number | null; // latest traders' volatility (GVZ), %
 }
 
 const DAY = 86400e3;
@@ -19,13 +21,20 @@ const aed2 = (v: number) => `AED ${v >= 1000 ? Math.round(v).toLocaleString('en-
 const aed = (v: number) => `AED ${v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(0)}`;
 const monthDay = (ymd: string) => new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props) {
+export function RealisticPrediction({ series, spotUsd, toAed, unitText, implied, impliedNow }: Props) {
+  // Past calls only depend on past days, so they are not recomputed on every live tick.
+  const pastKey = series && series.length > 1 ? `${series.length}:${series[series.length - 2].date}` : '';
+  const pastCalls = useMemo(
+    () => (series && series.length >= 200 ? trackRecord(series, [120, 90, 60, 30], 30, implied) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pastKey, implied]
+  );
   const data = useMemo(() => {
     if (!series || !spotUsd || series.length < 200) return null;
-    const path = realisticPath(series, spotUsd);
+    const path = realisticPath(series, spotUsd, [7, 30, 90], implied);
     if (!path) return null;
-    return { path, calls: trackRecord(series) };
-  }, [series, spotUsd]);
+    return { path, calls: pastCalls };
+  }, [series, spotUsd, implied, pastCalls]);
 
   if (!series || !spotUsd || !data) {
     return (
@@ -141,7 +150,7 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props)
               </div>
               <div className="text-[11px] text-[#a39b8a] mt-1">
                 {p.sureHitRate !== null
-                  ? `Tested on past prices: right ${(p.sureHitRate * 100).toFixed(1)}% of the time.`
+                  ? `Tested on past prices: right ${(p.sureHitRate * 100).toFixed(1)}% of the time (${p.checks.toLocaleString('en-US')} days checked).`
                   : 'Not enough past data yet to test this one.'}
               </div>
             </div>
@@ -156,7 +165,7 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText }: Props)
         </p>
         <p className="mt-3 text-[14px] leading-relaxed text-[#cfc7b6]">
           <span className="font-semibold text-[#fbf7ef]">What "99% sure" means. </span>
-          Nobody can name the exact future price, but we can name a range we are 99% sure about, and check it. We replayed the method on every day of the last two years, using only the prices known on that day: the real price ended inside the 99% range about 99 times out of 100. The range is wide because gold is swinging a lot right now; when markets calm down, it gets narrower.
+          Nobody can name the exact future price, but we can name a range we are 99% sure about, and check it. We replayed the method on every day since {series[0].date.slice(0, 4)}, using only what was known on that day: the real price ended inside the 99% range about 99 times out of 100. The width comes from two places, mixed half and half: how much gold itself has been swinging lately, and how much swinging the professional traders expect next month, read from gold option prices (the CBOE gold volatility index{impliedNow ? `, now ${impliedNow.toFixed(1)}%` : ''}). Mixing the two made the ranges narrower in our 21-year test while still holding 99 times in 100. When markets calm down, the range gets narrower too.
         </p>
         {calls.length > 0 && (
           <p className="mt-3 text-[14px] leading-relaxed text-[#cfc7b6]">

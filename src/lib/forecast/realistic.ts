@@ -6,7 +6,7 @@
  * The track record replays the same method at past dates and compares it with what really happened.
  */
 import { forecastGold, LONG_RUN_GROWTH_PER_YEAR } from './index';
-import type { DailyBar } from './types';
+import type { DailyBar, ImpliedVol } from './types';
 
 /** Gold's average growth since August 1971 (monthly data to Oct 2026: 43 -> 4105 USD/oz). */
 export const LONG_RUN_GROWTH_PCT_PER_YEAR = Math.round(LONG_RUN_GROWTH_PER_YEAR * 1000) / 10;
@@ -21,6 +21,7 @@ export interface RealisticPoint {
   sureLo: number; // 99%-sure range
   sureHi: number;
   sureHitRate: number | null; // walk-forward share of past outcomes inside the 99% range (null: too few)
+  checks: number; // how many past days that share is based on
 }
 
 export interface PastCall {
@@ -38,8 +39,8 @@ export interface PastCall {
 const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400e3).toISOString().slice(0, 10);
 const indexOnOrAfter = (b: readonly DailyBar[], ymd: string) => b.findIndex((x) => x.date >= ymd);
 
-export function realisticPath(series: readonly DailyBar[], spotUsd: number, horizons = [7, 30, 90]): RealisticPoint[] | null {
-  const f = forecastGold(series, spotUsd, horizons);
+export function realisticPath(series: readonly DailyBar[], spotUsd: number, horizons = [7, 30, 90], implied?: readonly ImpliedVol[]): RealisticPoint[] | null {
+  const f = forecastGold(series, spotUsd, horizons, implied);
   if (!f || !series.length) return null;
   const today = series[series.length - 1].date;
   return f.ranges.map((r) => ({
@@ -52,11 +53,12 @@ export function realisticPath(series: readonly DailyBar[], spotUsd: number, hori
     sureLo: r.sureLow,
     sureHi: r.sureHigh,
     sureHitRate: f.scorecard.find((sc) => sc.horizonDays === r.days)?.sureHitRate ?? null,
+    checks: f.scorecard.find((sc) => sc.horizonDays === r.days)?.samples ?? 0,
   }));
 }
 
 /** Replays the same method at past dates (only data known then) and checks it against reality. */
-export function trackRecord(series: readonly DailyBar[], lookbacks = [120, 90, 60, 30], horizon = 30): PastCall[] {
+export function trackRecord(series: readonly DailyBar[], lookbacks = [120, 90, 60, 30], horizon = 30, implied?: readonly ImpliedVol[]): PastCall[] {
   if (series.length < 200) return [];
   const today = series[series.length - 1].date;
   const out: PastCall[] = [];
@@ -65,7 +67,7 @@ export function trackRecord(series: readonly DailyBar[], lookbacks = [120, 90, 6
     if (i < 0) continue;
     const known = series.slice(0, i + 1);
     const from = known[known.length - 1];
-    const f = forecastGold(known, from.usd, [horizon]);
+    const f = forecastGold(known, from.usd, [horizon], implied);
     if (!f) continue;
     const r = f.ranges[0];
     const j = indexOnOrAfter(series, addDays(from.date, horizon));
