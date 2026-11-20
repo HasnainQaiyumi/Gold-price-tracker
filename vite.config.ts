@@ -5,14 +5,14 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 // Content-Security-Policy (build only: dev mode needs inline scripts for hot reload).
-// The site makes network requests to exactly two APIs and loads fonts from Google Fonts.
+// The site talks only to: gold spot, Coinbase (PAXG), rss2json (news headlines), Frankfurter (ECB FX); fonts from Google Fonts.
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   "img-src 'self' data:",
-  "connect-src 'self' https://api.gold-api.com https://api.exchange.coinbase.com",
+  "connect-src 'self' https://api.gold-api.com https://api.exchange.coinbase.com https://api.rss2json.com https://api.frankfurter.dev",
   "base-uri 'none'",
   "form-action 'none'",
   "object-src 'none'",
