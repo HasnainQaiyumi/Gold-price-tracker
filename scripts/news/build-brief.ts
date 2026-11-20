@@ -1,6 +1,6 @@
 /**
  * Builds public/data/brief.json (the "Why gold moved" paragraph) during the deploy job,
- * which runs every 4 hours. Uses Google Gemini (free tier; optional GEMINI_API_KEY secret) to summarise
+ * which runs once a day. Uses Google Gemini (free tier; optional GEMINI_API_KEY secret) to summarise
  * the news from real facts + headlines; any failure or rule violation falls back to the
  * deterministic rule-based paragraph. Never fails the deploy.
  */

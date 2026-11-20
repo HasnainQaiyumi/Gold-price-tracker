@@ -67,17 +67,7 @@ function DriverCard({ d, now }: { d: Driver; now: number }) {
 
       <div className="mt-4">
         <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667] mb-2">How it reaches the gold price</div>
-        <ol className="relative">
-          {d.steps.map((step, i) => (
-            <li key={i} className="relative pl-9 pb-3 last:pb-0">
-              {i < d.steps.length - 1 && <span className="absolute left-[11px] top-6 bottom-0 w-px bg-[#d9a93f]/30" aria-hidden />}
-              <span className="absolute left-0 top-0 grid place-items-center w-[23px] h-[23px] rounded-full bg-[#d9a93f]/15 border border-[#d9a93f]/50 text-[11px] font-bold text-[#f0cf72]">
-                {i + 1}
-              </span>
-              <span className={`text-sm leading-relaxed ${i === d.steps.length - 1 ? 'text-[#f0cf72] font-semibold' : 'text-[#d8d0bf]'}`}>{step}</span>
-            </li>
-          ))}
-        </ol>
+        <p className="text-[15px] leading-[1.8] text-[#e8e1d2]">{d.story}</p>
       </div>
 
       {d.note && (
@@ -150,7 +140,7 @@ export function WhyGoldMoved({ series, spotUsd, toAed, unitText }: Props) {
     <section aria-label="Gold explained" className="panel">
       <header className="mb-4">
         <h2 className="panel-title text-[1.35rem]">Gold explained</h2>
-        <p className="text-xs text-[#a39b8a] mt-1">What is happening in the world, and how it reaches the gold price. Updated every 4 hours.</p>
+        <p className="text-xs text-[#a39b8a] mt-1">What is happening in the world, and how it reaches the gold price. Updated once a day.</p>
       </header>
 
       {!x ? (

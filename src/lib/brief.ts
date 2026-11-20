@@ -1,15 +1,16 @@
 /**
- * The 4-hourly "Why gold moved" brief: one plain paragraph.
- * Built by scripts/news/build-brief.ts (GitHub Actions) and read by the app from ./data/brief.json.
- * An AI model may write the paragraph, but only from the facts and headlines given, and its output
- * is rejected if it contains numbers that are not in those inputs. Otherwise the rule-based text is used.
+ * The daily "Why gold moved" brief: one plain paragraph.
+ * Built by scripts/news/build-brief.ts (GitHub Actions, once a day) and read by the app from
+ * ./data/brief.json. An AI model may write the summary, but only from the facts and headlines
+ * given, and its output is rejected if it contains numbers that are not in those inputs, wrong
+ * direction wording, jargon or advice. Otherwise the rule-based text is used.
  */
 import type { Explanation, ThemeId } from './explain';
-import { LESSONS, type Driver, type Explainer } from './teach';
+import { LESSONS, STORIES, type Driver, type Explainer } from './teach';
 import { cleanText, NEWS_MAX_AGE_HOURS, parsePubDate, safeUrl, splitTitle, type Headline } from './news';
 
-export const BRIEF_INTERVAL_HOURS = 4;
-export const BRIEF_MAX_AGE_HOURS = 10; // older than this: the app falls back to a live rule-based paragraph
+export const BRIEF_INTERVAL_HOURS = 24;
+export const BRIEF_MAX_AGE_HOURS = 30; // older than this (a missed daily run + slack): fall back to a live paragraph
 
 export interface Brief {
   generatedAt: string; // ISO
@@ -248,7 +249,7 @@ export function sanitizeExplainer(raw: unknown): Explainer | null {
         const L = LESSONS[id];
         const direction: Driver['direction'] = r.direction === 'up' || r.direction === 'down' ? r.direction : 'unclear';
         const steps = Array.isArray(r.steps) ? r.steps.slice(0, 8).map((x) => txt(x, 300)).filter(Boolean) : [];
-        return [{ id, icon: L.icon, name: L.name, direction, whatHappened: txt(r.whatHappened, 800), steps: steps.length ? steps : direction === 'up' ? L.up : L.down, analogy: txt(r.analogy, 800) || L.analogy, note: txt(r.note, 400) || null, headlines: sanitizeHeadlines(r.headlines, 2) }];
+        return [{ id, icon: L.icon, name: L.name, direction, whatHappened: txt(r.whatHappened, 800), steps: steps.length ? steps : direction === 'up' ? L.up : L.down, analogy: txt(r.analogy, 800) || L.analogy, story: txt(r.story, 2500) || STORIES[id][direction === 'up' ? 'up' : 'down'], note: txt(r.note, 400) || null, headlines: sanitizeHeadlines(r.headlines, 2) }];
       })
     : [];
   const watch = Array.isArray(o.watch)

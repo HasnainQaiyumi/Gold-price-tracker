@@ -8,12 +8,16 @@ import {
   LineSeries,
   LineStyle,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type MouseEventParams,
+  type SeriesMarker,
   type Time,
 } from 'lightweight-charts';
 import { Panel, Seg } from './ui';
+import { explainPoint, type Arrow } from '../lib/chartStory';
 import {
   dayChangePct,
   isoDay,
@@ -67,6 +71,8 @@ interface Series {
   sma50: ISeriesApi<'Line'>;
   sma200: ISeriesApi<'Line'>;
   volume: ISeriesApi<'Histogram'>;
+  candleMarks: ISeriesMarkersPluginApi<Time>;
+  areaMarks: ISeriesMarkersPluginApi<Time>;
 }
 
 export function ProChart({
@@ -75,6 +81,7 @@ export function ProChart({
   toAed,
   unitText,
   paxgUsd,
+  outlook7,
 }: {
   candles: Candle[] | null;
   spotUsd: number | null;
@@ -82,6 +89,8 @@ export function ProChart({
   unitText: string;
   /** Optional live PAXG price; lets the chart remove PAXG's premium/discount to spot exactly. */
   paxgUsd?: number | null;
+  /** Today's "most likely" 1-week range in display units, from the forecast engine. */
+  outlook7?: { lo: number; hi: number } | null;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -180,7 +189,7 @@ export function ProChart({
     chart.subscribeCrosshairMove(onMove);
 
     chartRef.current = chart;
-    seriesRef.current = { candle, area, sma50, sma200, volume };
+    seriesRef.current = { candle, area, sma50, sma200, volume, candleMarks: createSeriesMarkers(candle, []), areaMarks: createSeriesMarkers(area, []) };
     return () => {
       chart.unsubscribeCrosshairMove(onMove);
       chart.remove();
@@ -256,6 +265,41 @@ export function ProChart({
     };
   }, [view, hoverDay]);
 
+  /* ------------------------------------------- plain-language story + pointers */
+  const story = useMemo(() => {
+    if (!view || !legend) return null;
+    const i = view.index.get(legend.c.time) as number;
+    return explainPoint(view.disp, i, legend.s50, legend.s200, (v) => `AED ${fmt(v)}`, outlook7 ?? null);
+  }, [view, legend, outlook7]);
+
+  useEffect(() => {
+    const s = seriesRef.current;
+    if (!s || !view || !legend) return;
+    const marks: SeriesMarker<Time>[] = [];
+    const a = story?.day.arrow;
+    marks.push(
+      a === 'down'
+        ? { time: legend.c.time as Time, position: 'aboveBar', color: C.down, shape: 'arrowDown', text: 'this day' }
+        : a === 'up'
+          ? { time: legend.c.time as Time, position: 'belowBar', color: C.up, shape: 'arrowUp', text: 'this day' }
+          : { time: legend.c.time as Time, position: 'aboveBar', color: C.gold, shape: 'circle', text: 'this day' }
+    );
+    if (story?.next) {
+      const n = story.next;
+      const label = `${n.laterPct >= 0 ? '+' : ''}${n.laterPct.toFixed(1)}% later`;
+      marks.push(
+        n.arrow === 'down'
+          ? { time: n.laterTime as Time, position: 'aboveBar', color: C.down, shape: 'arrowDown', text: label }
+          : n.arrow === 'up'
+            ? { time: n.laterTime as Time, position: 'belowBar', color: C.up, shape: 'arrowUp', text: label }
+            : { time: n.laterTime as Time, position: 'aboveBar', color: C.gold, shape: 'circle', text: label }
+      );
+    }
+    const onCandles = mode === 'candles';
+    (onCandles ? s.candleMarks : s.areaMarks).setMarkers(marks);
+    (onCandles ? s.areaMarks : s.candleMarks).setMarkers([]);
+  }, [story, legend, view, mode]);
+
   const tone = (v: number | null) => (v === null ? 'text-[#a39b8a]' : v >= 0 ? 'text-[#6fcf97]' : 'text-[#ef6b6b]');
   const kv = (k: string, v: string, cls = 'text-[#f4efe6]') => (
     <span className="whitespace-nowrap">
@@ -322,10 +366,51 @@ export function ProChart({
           </div>
         )}
       </div>
+      {story && (
+        <div aria-live="polite" className="mt-3 rounded-2xl border border-[#d9a93f]/25 bg-[#0d0c09] p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-[#d9a93f] font-semibold">What this point on the chart means</div>
+            <div className="text-xs text-[#fbf7ef] font-semibold">{story.date}</div>
+          </div>
+          <ul className="mt-3 flex flex-col gap-2.5">
+            <StoryRow arrow={story.day.arrow} text={story.day.text} />
+            {story.trend && <StoryRow arrow={story.trend.arrow} text={story.trend.text} />}
+            {story.place && <StoryRow arrow="pin" text={story.place} />}
+            {story.next && <StoryRow arrow={story.next.arrow} label="Next" text={story.next.text} />}
+            {story.latest && <StoryRow arrow="future" label="Next" text={story.latest} />}
+          </ul>
+          <p className="mt-3 text-[11px] text-[#7d7667]">
+            Move your cursor (or finger) across the chart to read any day. The arrow marked "this day" is where you are; the second arrow shows where the price actually was about a month later.
+          </p>
+        </div>
+      )}
+
       <p className="mt-2 text-[10px] text-[#7d7667]">
         Source: Coinbase PAXG-USD (1 PAXG = 1 troy oz of gold, trades 24/7, so SMA periods count calendar days). Volume is PAXG traded.
       </p>
     </Panel>
+  );
+}
+
+function StoryRow({ arrow, text, label }: { arrow: Arrow | 'mixed' | 'pin' | 'future'; text: string; label?: string }) {
+  const look = {
+    up: { sym: '▲', cls: 'text-[#6fcf97] bg-[#6fcf97]/10 border-[#6fcf97]/30' },
+    down: { sym: '▼', cls: 'text-[#ef6b6b] bg-[#ef6b6b]/10 border-[#ef6b6b]/30' },
+    flat: { sym: '▶', cls: 'text-[#f0cf72] bg-[#f0cf72]/10 border-[#f0cf72]/30' },
+    mixed: { sym: '⇅', cls: 'text-[#f0cf72] bg-[#f0cf72]/10 border-[#f0cf72]/30' },
+    pin: { sym: '📍', cls: 'text-[#d8d0bf] bg-white/[0.04] border-white/10' },
+    future: { sym: '➜', cls: 'text-[#f0cf72] bg-[#f0cf72]/10 border-[#f0cf72]/30' },
+  }[arrow];
+  return (
+    <li className="flex gap-3 items-start">
+      <span className={`shrink-0 grid place-items-center w-7 h-7 rounded-full border text-sm ${look.cls}`} aria-hidden>
+        {look.sym}
+      </span>
+      <span className="text-[14px] leading-relaxed text-[#e8e1d2]">
+        {label && <span className="font-semibold text-[#fbf7ef]">{label}: </span>}
+        {label ? text.replace(/^What happened next: /, '') : text}
+      </span>
+    </li>
   );
 }
 

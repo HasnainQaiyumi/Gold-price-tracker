@@ -178,7 +178,17 @@ function Dashboard({ onLock }: { onLock: () => void }) {
           <Alerts alerts={alerts} setAlerts={setAlerts} price24={price24} />
         </div>
 
-        <ProChart candles={candles} spotUsd={spot?.usd ?? null} paxgUsd={paxg?.usd ?? null} toAed={toAed} unitText={unitText} />
+        <ProChart
+          candles={candles}
+          spotUsd={spot?.usd ?? null}
+          paxgUsd={paxg?.usd ?? null}
+          toAed={toAed}
+          unitText={unitText}
+          outlook7={(() => {
+            const r = forecast?.ranges.find((x) => x.days === 7);
+            return r ? { lo: toAed(r.likelyLow), hi: toAed(r.likelyHigh) } : null;
+          })()}
+        />
         <PriceHistory series={series} toAed={toAed} unitText={unitText} statsOnly />
 
         {spot && closes30 && (

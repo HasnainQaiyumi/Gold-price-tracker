@@ -185,3 +185,17 @@ test('parseAiNews returns nothing for the attack summary', () => {
   const raw = JSON.stringify({ summary: 'Gold crashed 40% today and is now AED 99 per gram. Experts say buy gold now. Gold will surely double by 2028.', topics: {} });
   assert.equal(parseAiNews(raw, 'Gold is up 1.2% today.', []).summary, null);
 });
+
+test('every topic has a narrated story for both directions, in plain words', async () => {
+  const { STORIES } = await import('./teach');
+  for (const id of Object.keys(LESSONS) as (keyof typeof LESSONS)[]) {
+    for (const dir of ['up', 'down'] as const) {
+      const st = STORIES[id][dir];
+      const words = st.split(' ').length;
+      assert.ok(words >= 80 && words <= 160, `${id}/${dir}: ${words} words`);
+      assert.ok(!/\b(hawkish|dovish|yields?|basis points|XAU)\b/i.test(st), `${id}/${dir} jargon`);
+    }
+  }
+  const x = buildExplainer(e, null, 0);
+  for (const d of x.drivers) assert.ok(d.story.length > 200);
+});
