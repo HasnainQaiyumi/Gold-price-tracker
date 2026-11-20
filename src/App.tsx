@@ -4,6 +4,7 @@ import { ArbitrageCalculator } from './components/ArbitrageCalculator';
 import { CurrencyCards } from './components/CurrencyCards';
 import { ForecastChart } from './components/ForecastChart';
 import { MacroSimulator } from './components/MacroSimulator';
+import { SimpleSaver } from './components/SimpleSaver';
 import { TopHeader } from './components/TopHeader';
 import {
   DEFAULT_ASSUMPTIONS,
@@ -47,6 +48,7 @@ const FALLBACK_MARKET: MarketDataPayload = {
 const PURITIES: KaratPurity[] = [24, 22, 21, 18];
 
 export default function App() {
+  const [showPro, setShowPro] = useState<boolean>(false);
   const [activeSection, setActiveSection] = useState<NavSection>('overview');
   const [marketData, setMarketData] = useState<MarketDataPayload>(FALLBACK_MARKET);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -314,6 +316,20 @@ export default function App() {
       />
 
       <main className="flex-1 max-w-[1380px] w-full mx-auto px-6 py-6 flex flex-col gap-6">
+        <SimpleSaver
+          spotUsdOz={marketData.spotUsdOz}
+          history30d={marketData.history30d}
+          assumptions={assumptions}
+        />
+        <button
+          type="button"
+          onClick={() => setShowPro((v) => !v)}
+          aria-expanded={showPro}
+          className="self-start text-xs font-semibold text-[#f3d06b] border border-[#e5b842]/40 rounded-md px-3 py-1.5 cursor-pointer"
+        >
+          {showPro ? 'Hide pro tools' : 'Show pro tools (forecast, arbitrage, alerts)'}
+        </button>
+        {showPro && (<>
         {/* Clean unboxed market telemetry summary line + workspace controls */}
         <section
           aria-label="Market controls and spot rates"
@@ -544,6 +560,7 @@ export default function App() {
             onDownloadSnapshotJson={handleDownloadSnapshotJson}
           />
         )}
+        </>)}
       </main>
 
       <footer className="border-t border-white/[0.06] py-5 px-6 text-center text-xs text-[#64748b]">
