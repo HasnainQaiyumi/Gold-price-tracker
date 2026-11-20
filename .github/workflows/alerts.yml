@@ -65,6 +65,7 @@ jobs:
           WHATSAPP_QUIET_HOURS: ${{ secrets.WHATSAPP_QUIET_HOURS || vars.WHATSAPP_QUIET_HOURS }}
           SUMMARY_EVERY_HOURS: ${{ secrets.SUMMARY_EVERY_HOURS || vars.SUMMARY_EVERY_HOURS }}
           EMAIL_KEEP_ONLY_LATEST: ${{ secrets.EMAIL_KEEP_ONLY_LATEST || vars.EMAIL_KEEP_ONLY_LATEST }}
+          ALERT_NAME: ${{ secrets.ALERT_NAME || vars.ALERT_NAME }}
       - name: Save alert memory
         if: always()
         uses: actions/cache/save@v4
