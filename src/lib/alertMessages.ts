@@ -13,6 +13,14 @@ export interface AlertContext {
   configUrl: string;
   brief?: string | null; // the latest "Why gold is moving" paragraph, if fresh
   explainer?: Explainer | null; // the full teacher-style explainer (used in the morning briefing)
+  name?: string | null; // the reader's first name, for the greeting
+}
+
+/** "Gold for you today, Hasnain!" for briefings, "Gold alert for you, Hasnain!" for alerts. */
+export function greeting(ctx: AlertContext): string {
+  const who = (ctx.name ?? '').replace(/[^\p{L}\p{M} '-]/gu, '').trim().slice(0, 40);
+  const briefing = ctx.events.every((e) => e.kind === 'daily');
+  return briefing ? `Gold for you today${who ? `, ${who}` : ''}!` : `Gold alert for you${who ? `, ${who}` : ''}!`;
 }
 
 /** Every email uses this subject and references the same thread root, so Gmail keeps them in one conversation. */
@@ -116,7 +124,7 @@ export function renderWhatsApp(ctx: AlertContext): string {
         return `${d.emoji} *${d.title}*\n${d.line}`;
       });
   return [
-    morningOnly ? `🟡 *GOLD BRIEFING*` : `🟡 *GOLD ALERT*`,
+    `🟡 *${greeting(ctx)}*`,
     `*AED ${aed(ctx.price24)}/g* (24K)${chg !== null ? `  ${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today` : ''}`,
     '',
     ...lines,
@@ -219,13 +227,14 @@ export function renderEmailHtml(ctx: AlertContext): string {
     .join('');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>${esc(renderSubject(ctx))}</title></head>
 <body style="margin:0;padding:0;background:#0a0907">
-<div style="display:none;max-height:0;overflow:hidden">${esc(first.line)}</div>
+<div style="display:none;max-height:0;overflow:hidden">${esc(greeting(ctx))} ${esc(first.line)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0907"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <tr><td style="padding:0 6px 14px"><table role="presentation" width="100%"><tr>
 <td style="font-size:15px;font-weight:800;letter-spacing:.3em;color:#f0cf72">● GOLD</td>
 <td align="right" style="font-size:12px;color:#7d7667">${esc(dubaiTime(ctx.quoteAt))}</td></tr></table></td></tr>
 <tr><td style="background:#16130d;border:1px solid #4a3c1c;border-radius:20px;padding:28px 26px">
+<div style="font-family:Georgia,'Times New Roman',serif;font-size:24px;line-height:1.25;color:#fbf7ef;font-weight:600;margin-bottom:12px">${esc(greeting(ctx))}</div>
 <div style="font-size:13px;color:#d9a93f;font-weight:700;letter-spacing:.08em;text-transform:uppercase">${first.emoji} ${esc(first.title)}</div>
 <div style="font-family:Georgia,'Times New Roman',serif;font-size:52px;line-height:1.05;color:#f0cf72;font-weight:600;margin-top:10px"><span style="font-size:22px;color:#a39b8a;vertical-align:middle">AED</span> ${aed(ctx.price24)}</div>
 <div style="font-size:13px;color:#a39b8a;margin-top:6px">per gram · 24K${chg !== null ? ` &nbsp;<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${chgColor}22;color:${chgColor};font-weight:700">${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today</span>` : ''}</div>

@@ -173,7 +173,7 @@ async function main() {
     const fmtPrice = (usd: number) => `AED ${usdOzToAedPerG(usd).toFixed(2)} per gram of 24K gold`;
     explainer = { ...explainer, happened: happenedSentences(priceFacts(series, spot.usd), fmtPrice).join(' ') };
   }
-  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief: brief?.paragraph ?? null, explainer };
+  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief: brief?.paragraph ?? null, explainer, name: (process.env.ALERT_NAME ?? '').trim() || 'Hasnain' };
 
   let failed = false;
   if (alertEvents.length) {

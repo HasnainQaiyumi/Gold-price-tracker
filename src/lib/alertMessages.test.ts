@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartSvg, isOurUpdate, newUpdateMessageId, renderEmailHtml, renderSubject, renderWhatsApp, shortBrief, THREAD_ROOT, type AlertContext } from './alertMessages';
+import { chartSvg, greeting, isOurUpdate, newUpdateMessageId, renderEmailHtml, renderSubject, renderWhatsApp, shortBrief, THREAD_ROOT, type AlertContext } from './alertMessages';
 
 const ctx: AlertContext = {
   events: [{ kind: 'target', id: 't', dir: 'above', target: 440 }, { kind: 'move', pct: 2.4 }],
@@ -53,4 +53,14 @@ test('one-thread email identity: our Message-IDs are recognised, nothing else is
   for (const other of [THREAD_ROOT, '<CAF=abc@mail.gmail.com>', '<gold-update-x@evil.com>', 'gold-update-1@gmail.com', '', null, undefined]) {
     assert.equal(isOurUpdate(other as string), false, String(other));
   }
+});
+
+test('personal greeting: briefing vs alert, name cleaned, safe in HTML', () => {
+  const daily = { ...ctx, events: [{ kind: 'daily' as const }], name: 'Hasnain' };
+  assert.equal(greeting(daily), 'Gold for you today, Hasnain!');
+  assert.equal(greeting({ ...ctx, name: 'Hasnain' }), 'Gold alert for you, Hasnain!');
+  assert.equal(greeting({ ...daily, name: '' }), 'Gold for you today!');
+  assert.equal(greeting({ ...daily, name: '<script>x</script>Ali' }), 'Gold for you today, scriptxscriptAli!');
+  assert.ok(renderEmailHtml(daily).includes('Gold for you today, Hasnain!'));
+  assert.match(renderWhatsApp(daily), /^🟡 \*Gold for you today, Hasnain!\*/);
 });
