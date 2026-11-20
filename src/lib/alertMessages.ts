@@ -15,6 +15,18 @@ export interface AlertContext {
   explainer?: Explainer | null; // the full teacher-style explainer (used in the morning briefing)
 }
 
+/** Every email uses this subject and references the same thread root, so Gmail keeps them in one conversation. */
+export const THREAD_SUBJECT = 'Gold price updates';
+export const THREAD_ROOT = '<gold-updates-thread@gmail.com>';
+/** Message-IDs of our emails start with this, which is how the clean-up recognises them (and nothing else). */
+export const OUR_ID_PREFIX = '<gold-update-';
+export function newUpdateMessageId(nowMs: number, rand: number): string {
+  return `${OUR_ID_PREFIX}${nowMs.toString(36)}-${Math.floor(rand * 1e9).toString(36)}@gmail.com>`;
+}
+export function isOurUpdate(messageId: string | undefined | null): boolean {
+  return typeof messageId === 'string' && messageId.startsWith(OUR_ID_PREFIX) && messageId.endsWith('@gmail.com>');
+}
+
 const TOLA_G = 11.6638;
 const OZ_G = 31.1034768;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
@@ -44,7 +56,7 @@ export function describe(e: AlertEvent, price24: number): { title: string; line:
         ? { emoji: '↗️', title: 'Crossed above its long-term average', line: `Gold (${p}) moved above its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning up. It is not a guarantee.` }
         : { emoji: '↘️', title: 'Crossed below its long-term average', line: `Gold (${p}) moved below its 200-day average of AED ${aed(e.sma)}. Many traders see this as the trend turning down. It is not a guarantee.` };
     case 'daily':
-      return { emoji: '☀️', title: 'Good morning! Your gold briefing', line: `24K gold is ${p} this morning.` };
+      return { emoji: '🟡', title: 'Your gold briefing', line: `24K gold is ${p} right now.` };
     case 'test':
       return { emoji: '✅', title: 'Test alert: everything works', line: `Your gold alerts are set up correctly. Gold is ${p} right now.` };
   }
@@ -54,7 +66,7 @@ export function renderSubject(ctx: AlertContext): string {
   const first = describe(ctx.events[0], ctx.price24);
   if (ctx.events.length === 1 && ctx.events[0].kind === 'daily') {
     const chg = ctx.prevClose24 ? (ctx.price24 / ctx.prevClose24 - 1) * 100 : null;
-    return `☀️ Gold today: AED ${aed(ctx.price24)}/g${chg !== null ? ` (${chg >= 0 ? '▲' : '▼'} ${signPct(chg)})` : ''}`;
+    return `🟡 Gold now: AED ${aed(ctx.price24)}/g${chg !== null ? ` (${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today)` : ''}`;
   }
   const more = ctx.events.length > 1 ? ` (+${ctx.events.length - 1} more)` : '';
   return `${first.emoji} Gold ${aed(ctx.price24)} AED/g · ${first.title}${more}`;
@@ -104,7 +116,7 @@ export function renderWhatsApp(ctx: AlertContext): string {
         return `${d.emoji} *${d.title}*\n${d.line}`;
       });
   return [
-    morningOnly ? `☀️ *GOOD MORNING · GOLD BRIEFING*` : `🟡 *GOLD ALERT*`,
+    morningOnly ? `🟡 *GOLD BRIEFING*` : `🟡 *GOLD ALERT*`,
     `*AED ${aed(ctx.price24)}/g* (24K)${chg !== null ? `  ${chg >= 0 ? '▲' : '▼'} ${signPct(chg)} today` : ''}`,
     '',
     ...lines,

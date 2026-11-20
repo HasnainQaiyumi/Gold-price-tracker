@@ -77,7 +77,14 @@ export interface SimResult {
   end: Record<number, Hist>; // log(P_h / P_0)
   min: Record<number, Hist>; // lowest log-return reached during days 1..h
   max: Record<number, Hist>; // highest during days 1..h
+  day: Hist[]; // day[d-1]: log-return on day d (only when options.daily)
+  samples: Float32Array[]; // a few complete paths for drawing (log-returns, day 1..H)
   ms: number;
+}
+
+export interface SimOptions {
+  daily?: boolean;
+  samples?: number;
 }
 
 /** xorshift32: fast, deterministic. */
@@ -91,7 +98,7 @@ function rng(seed: number) {
   };
 }
 
-export function simulate(p: Prepared, paths: number, horizons: number[] = [7, 30], seed = 12345, onProgress?: (done: number) => void): SimResult {
+export function simulate(p: Prepared, paths: number, horizons: number[] = [7, 30], seed = 12345, onProgress?: (done: number) => void, opts: SimOptions = {}): SimResult {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const H = Math.max(...horizons);
   const hs = new Set(horizons);
@@ -101,6 +108,9 @@ export function simulate(p: Prepared, paths: number, horizons: number[] = [7, 30
     min[h] = newHist();
     max[h] = newHist();
   }
+  const day: Hist[] = opts.daily ? Array.from({ length: H }, newHist) : [];
+  const nSamples = Math.min(opts.samples ?? 0, paths);
+  const samples: Float32Array[] = Array.from({ length: nSamples }, () => new Float32Array(H));
   const rand = rng(seed);
   const { z, v0, lr } = p;
   const nz = z.length;
@@ -114,6 +124,8 @@ export function simulate(p: Prepared, paths: number, horizons: number[] = [7, 30
       if (x < lo) lo = x;
       if (x > hi) hi = x;
       v = omega + GARCH_ALPHA * shock * shock + GARCH_BETA * v;
+      if (opts.daily) { day[d - 1].counts[bin(x)]++; day[d - 1].n++; }
+      if (k < nSamples) samples[k][d - 1] = x;
       if (hs.has(d)) {
         end[d].counts[bin(x)]++; end[d].n++;
         min[d].counts[bin(lo)]++; min[d].n++;
@@ -123,5 +135,24 @@ export function simulate(p: Prepared, paths: number, horizons: number[] = [7, 30
     if (onProgress && k % step === 0) onProgress(k / paths);
   }
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  return { paths, end, min, max, ms: t1 - t0 };
+  return { paths, end, min, max, day, samples, ms: t1 - t0 };
+}
+
+/** Fan chart: for each day, the price quantiles (as log-returns) at the given probabilities. */
+export function fan(sim: SimResult, probs: number[]): number[][] {
+  return sim.day.map((h) => probs.map((p) => quantile(h, p)));
+}
+
+/** Probability curve for one horizon: `bins` equal slices between the 0.1% and 99.9% quantiles. */
+export function curve(h: Hist, bins = 70): { x: number; p: number }[] {
+  const lo = quantile(h, 0.001), hi = quantile(h, 0.999);
+  const w = (hi - lo) / bins;
+  const out = Array.from({ length: bins }, (_, i) => ({ x: lo + (i + 0.5) * w, p: 0 }));
+  for (let i = 0; i < BINS; i++) {
+    const c = h.counts[i];
+    if (!c) continue;
+    const j = Math.floor((binMid(i) - lo) / w);
+    if (j >= 0 && j < bins) out[j].p += c / h.n;
+  }
+  return out;
 }

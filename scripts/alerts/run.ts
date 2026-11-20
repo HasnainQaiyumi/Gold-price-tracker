@@ -5,20 +5,22 @@
  *
  * Secrets: GMAIL_USER, GMAIL_APP_PASSWORD, ALERT_EMAIL_TO (optional), WHATSAPP_PHONE, CALLMEBOT_APIKEY.
  * Variables (plain text, optional): ALERT_TARGETS ("above 445, below 400"), ALERT_DAILY_MOVE ("2" or "off"),
- *   DAILY_SUMMARY (email | whatsapp | both | off), DAILY_SUMMARY_HOUR (Dubai hour, default 8),
+ *   DAILY_SUMMARY (email | whatsapp | both | off), DAILY_SUMMARY_HOUR (first briefing, Dubai hour, default 8),
+ *   SUMMARY_EVERY_HOURS (default 8: 8am, 4pm, midnight), EMAIL_KEEP_ONLY_LATEST (on | off, default on),
  *   WHATSAPP_QUIET_HOURS ("23-7" or "off"). ALERT_TEST=1 sends a sample alert now.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Resvg } from '@resvg/resvg-js';
 import nodemailer from 'nodemailer';
-import { chartSvg, renderEmailHtml, renderEmailText, renderSubject, renderWhatsApp, type AlertContext } from '../../src/lib/alertMessages';
+import { chartSvg, newUpdateMessageId, renderEmailHtml, renderEmailText, renderSubject, renderWhatsApp, THREAD_ROOT, THREAD_SUBJECT, type AlertContext } from '../../src/lib/alertMessages';
+import { trashOlderUpdates } from './mailbox';
 import { fetchPaxgHistory, fetchSpot } from '../../src/lib/feed';
 import { smaSeries } from '../../src/lib/goldAnalytics';
 import { usdOzToAedPerG } from '../../src/lib/goldPricing';
 import { marketStatus } from '../../src/lib/market';
 import { BRIEF_MAX_AGE_HOURS, sanitizeBrief } from '../../src/lib/brief';
 import type { Explainer } from '../../src/lib/teach';
-import { dailyDue, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, sanitizeConfig, sanitizeState, settingsFromEnv, type AlertEvent, type Facts } from '../../src/lib/serverAlerts';
+import { summaryDue, summarySlot, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, sanitizeConfig, sanitizeState, settingsFromEnv, type AlertEvent, type Facts } from '../../src/lib/serverAlerts';
 import { happenedSentences, priceFacts } from '../../src/lib/explain';
 import type { DailyBar } from '../../src/lib/forecast/types';
 
@@ -46,14 +48,26 @@ async function sendEmail(ctx: AlertContext): Promise<SendResult> {
   try {
     const png = new Resvg(chartSvg(ctx.closes30, ctx.targets), { fitTo: { mode: 'width', value: 1120 } }).render().asPng();
     const t = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
+    const messageId = newUpdateMessageId(Date.now(), Math.random());
     await t.sendMail({
-      from: `"Gold alerts" <${user}>`,
+      from: `"Gold updates" <${user}>`,
       to: process.env.ALERT_EMAIL_TO || user,
-      subject: renderSubject(ctx),
-      text: renderEmailText(ctx),
+      subject: THREAD_SUBJECT, // same subject + same thread root = one Gmail conversation
+      messageId,
+      inReplyTo: THREAD_ROOT,
+      references: [THREAD_ROOT],
+      text: `${renderSubject(ctx)}\n\n${renderEmailText(ctx)}`,
       html: renderEmailHtml(ctx),
       attachments: [{ filename: 'gold-chart.png', content: png, cid: 'chart' }],
     });
+    if ((process.env.EMAIL_KEEP_ONLY_LATEST ?? 'on').trim().toLowerCase() !== 'off') {
+      try {
+        const n = await trashOlderUpdates(user, pass, messageId);
+        console.log(`email: moved ${n} older update(s) to Trash`);
+      } catch (e) {
+        console.log(`::warning title=Email clean-up::could not move older updates to Trash (${errText(e)}). The new email was sent.`);
+      }
+    }
     console.log('email: sent');
     return 'sent';
   } catch (e) {
@@ -144,8 +158,9 @@ async function main() {
   }
   const clock = dubaiClock(nowMs);
   const quiet = inQuietHours(clock.hour, notify.quietHours);
-  const morning = !test && dailyDue(prev, nowMs, notify);
-  console.log(`price ${price24.toFixed(2)} AED/g, market ${facts.marketOpen ? 'open' : 'closed/stale'}, ${cfg.targets.length} targets, alerts: ${alertEvents.map((e) => e.kind).join(',') || 'none'}${morning ? ', morning briefing due' : ''}${quiet ? ', WhatsApp quiet hours' : ''}`);
+  const slot = summarySlot(nowMs, notify);
+  const morning = !test && summaryDue(prev, nowMs, notify);
+  console.log(`price ${price24.toFixed(2)} AED/g, market ${facts.marketOpen ? 'open' : 'closed/stale'}, ${cfg.targets.length} targets, alerts: ${alertEvents.map((e) => e.kind).join(',') || 'none'}${morning ? ', briefing due' : ''}${quiet ? ', WhatsApp quiet hours' : ''}`);
   if (!alertEvents.length && !morning) {
     if (!test) save(next);
     return;
@@ -185,16 +200,16 @@ async function main() {
     const ch = { email: wantEmail && emailReady(), whatsapp: wantWa && whatsappReady() && !quiet };
     const ctx = { ...base, prevClose24: facts.marketOpen ? facts.prevClose24 : null, events: [{ kind: 'daily' } as AlertEvent] };
     if (!ch.email && !ch.whatsapp) {
-      if (wantWa && whatsappReady() && quiet) console.log('morning briefing waiting for WhatsApp quiet hours to end');
+      if (wantWa && whatsappReady() && quiet) console.log('briefing waiting for WhatsApp quiet hours to end');
       else {
-        console.log(`::warning title=Morning briefing::DAILY_SUMMARY is "${notify.daily}" but that channel is not set up; skipped for today.`);
-        next = { ...next, lastDailyDay: clock.date };
+        console.log(`::warning title=Briefing::DAILY_SUMMARY is "${notify.daily}" but that channel is not set up; skipped for this briefing.`);
+        next = { ...next, lastSummarySlot: slot };
       }
     } else {
       const r = await deliver(ctx, ch);
-      if (r.sent) next = { ...next, lastDailyDay: clock.date };
+      if (r.sent) next = { ...next, lastSummarySlot: slot };
       else {
-        console.log('morning briefing not delivered; will retry next run');
+        console.log('briefing not delivered; will retry next run');
         failed = failed || r.attempted;
       }
     }

@@ -1,6 +1,6 @@
 /**
- * The daily "Why gold moved" brief: one plain paragraph.
- * Built by scripts/news/build-brief.ts (GitHub Actions, once a day) and read by the app from
+ * The "Why gold moved" brief: one plain paragraph.
+ * Built by scripts/news/build-brief.ts (GitHub Actions, every 8 hours) and read by the app from
  * ./data/brief.json. An AI model may write the summary, but only from the facts and headlines
  * given, and its output is rejected if it contains numbers that are not in those inputs, wrong
  * direction wording, jargon or advice. Otherwise the rule-based text is used.
@@ -9,7 +9,7 @@ import type { Explanation, ThemeId } from './explain';
 import { LESSONS, STORIES, type Driver, type Explainer } from './teach';
 import { cleanText, NEWS_MAX_AGE_HOURS, parsePubDate, safeUrl, splitTitle, type Headline } from './news';
 
-export const BRIEF_INTERVAL_HOURS = 24;
+export const BRIEF_INTERVAL_HOURS = 8;
 export const BRIEF_MAX_AGE_HOURS = 30; // older than this (a missed daily run + slack): fall back to a live paragraph
 
 export interface Brief {

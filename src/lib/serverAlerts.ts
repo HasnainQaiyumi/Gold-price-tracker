@@ -24,7 +24,8 @@ export interface AlertState {
   lastHighDay?: string;
   lastLowDay?: string;
   trendSide?: 'above' | 'below';
-  lastDailyDay?: string; // Dubai date of the last morning summary
+  lastDailyDay?: string; // (old) Dubai date of the last morning summary
+  lastSummarySlot?: string; // Dubai slot (YYYY-MM-DDTHH) of the last briefing sent
 }
 
 export interface Facts {
@@ -92,6 +93,7 @@ export function sanitizeState(raw: unknown): AlertState {
     lastLowDay: day(o.lastLowDay),
     trendSide: o.trendSide === 'above' || o.trendSide === 'below' ? o.trendSide : undefined,
     lastDailyDay: day(o.lastDailyDay),
+    lastSummarySlot: typeof o.lastSummarySlot === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}$/.test(o.lastSummarySlot) ? o.lastSummarySlot : undefined,
   };
 }
 
@@ -159,11 +161,12 @@ export type Channels = 'email' | 'whatsapp' | 'both' | 'off';
 
 export interface NotifySettings {
   daily: Channels; // morning summary channels
-  dailyHourDubai: number; // 0-23
+  dailyHourDubai: number; // 0-23: the first briefing of the day
+  everyHours: number; // a briefing every N hours from that hour (divides 24)
   quietHours: [number, number] | null; // WhatsApp silent between these Dubai hours, e.g. [23, 7]
 }
 
-export const DEFAULT_NOTIFY: NotifySettings = { daily: 'email', dailyHourDubai: 8, quietHours: [23, 7] };
+export const DEFAULT_NOTIFY: NotifySettings = { daily: 'email', dailyHourDubai: 8, everyHours: 8, quietHours: [23, 7] };
 
 /** "above 445, below 400" / "rise 445; fall 400" / "below 400 or above 445" -> target rules (+ pieces it could not read). */
 export function parseTargetsTextDetailed(text: string): { rules: TargetRule[]; skipped: string[] } {
@@ -213,6 +216,7 @@ export function settingsFromEnv(env: Record<string, string | undefined>, file: A
   const notify: NotifySettings = {
     daily: chan(env.DAILY_SUMMARY, DEFAULT_NOTIFY.daily),
     dailyHourDubai: Number.isInteger(hour) && hour >= 0 && hour <= 23 && (env.DAILY_SUMMARY_HOUR ?? '').trim() !== '' ? hour : DEFAULT_NOTIFY.dailyHourDubai,
+    everyHours: [1, 2, 3, 4, 6, 8, 12, 24].includes(Number((env.SUMMARY_EVERY_HOURS ?? '').trim())) ? Number(env.SUMMARY_EVERY_HOURS!.trim()) : DEFAULT_NOTIFY.everyHours,
     quietHours: qh === 'off' ? null : qm && +qm[1] <= 23 && +qm[2] <= 23 ? [+qm[1], +qm[2]] : DEFAULT_NOTIFY.quietHours,
   };
   return { config, notify, skippedTargets };
@@ -237,9 +241,26 @@ export function inQuietHours(hour: number, q: [number, number] | null): boolean 
   return a === b ? false : a < b ? hour >= a && hour < b : hour >= a || hour < b;
 }
 
-/** Morning summary is due once per Dubai day, at or after the chosen hour. */
-export function dailyDue(state: AlertState, nowMs: number, n: NotifySettings): boolean {
-  if (n.daily === 'off') return false;
-  const c = dubaiClock(nowMs);
-  return c.hour >= n.dailyHourDubai && state.lastDailyDay !== c.date;
+/** The briefing slot (Dubai time, "YYYY-MM-DDTHH") that `nowMs` falls in: slots start at the chosen
+ * hour and then every `everyHours` hours (8am, 4pm, midnight by default). */
+export function summarySlot(nowMs: number, n: NotifySettings): string {
+  const dub = nowMs + 4 * 3600e3;
+  const dayStart = Math.floor(dub / 86400e3) * 86400e3;
+  let best = -Infinity;
+  for (const base of [dayStart - 86400e3, dayStart]) {
+    for (let h = n.dailyHourDubai % n.everyHours; h < 24; h += n.everyHours) {
+      const st = base + h * 3600e3;
+      if (st <= dub && st > best) best = st;
+    }
+  }
+  return new Date(best).toISOString().slice(0, 13);
 }
+
+/** A briefing is due once per slot. */
+export function summaryDue(state: AlertState, nowMs: number, n: NotifySettings): boolean {
+  if (n.daily === 'off') return false;
+  return state.lastSummarySlot !== summarySlot(nowMs, n);
+}
+
+/** Kept for older callers: a briefing is due (same as summaryDue). */
+export const dailyDue = summaryDue;
