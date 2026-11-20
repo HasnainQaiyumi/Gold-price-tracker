@@ -28,7 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         id: pages
       - name: Keep the last good brief in case a refresh fails
         run: mkdir -p public/data && curl -fsS "${{ steps.pages.outputs.base_url }}/data/brief.json" -o public/data/brief.json || true
