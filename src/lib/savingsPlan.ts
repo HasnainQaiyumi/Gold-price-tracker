@@ -1,5 +1,5 @@
 import { convertUsdOzToMarket } from './goldPricing';
-import type { HistoryPoint, PricingAssumptions } from './types';
+import type { PricingAssumptions } from './types';
 
 /** Dealer buy-back haircut vs. spot when you sell (assumption, editable in one place). */
 export const SELL_HAIRCUT = 0.01;
@@ -62,8 +62,8 @@ export function monthlyNeeded(
 export type TimingSignal = { label: 'Below average' | 'Near average' | 'Above average'; pct: number };
 
 /** Spot vs 30-day average. Descriptive only — not a prediction. */
-export function timingSignal(spotUsdOz: number, history: HistoryPoint[]): TimingSignal {
-  const avg = history.length ? history.reduce((s, p) => s + p.usdOz, 0) / history.length : spotUsdOz;
+export function timingSignal(spotUsdOz: number, closes: number[]): TimingSignal {
+  const avg = closes.length ? closes.reduce((s, c) => s + c, 0) / closes.length : spotUsdOz;
   const pct = (spotUsdOz / avg - 1) * 100;
   return { label: pct < -2 ? 'Below average' : pct > 2 ? 'Above average' : 'Near average', pct };
 }

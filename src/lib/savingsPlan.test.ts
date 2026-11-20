@@ -29,7 +29,7 @@ test('monthsToTarget and monthlyNeeded are consistent', () => {
 });
 
 test('timing signal flags price vs 30d average', () => {
-  const hist = Array.from({ length: 30 }, (_, i) => ({ dateLabel: String(i), usdOz: 3000 }));
+  const hist = Array.from({ length: 30 }, () => 3000);
   assert.equal(timingSignal(3300, hist).label, 'Above average');
   assert.equal(timingSignal(2800, hist).label, 'Below average');
   assert.equal(timingSignal(3010, hist).label, 'Near average');

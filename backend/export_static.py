@@ -38,6 +38,13 @@ def export_json():
         for dt, val in zip(recent.index, recent["gold_close"])
     ]
 
+    # Real daily closes (~2y) so the UI can compute indicators from actual data, never synthetic.
+    gold_series = df["gold_close"].dropna().tail(504)
+    history_daily = [
+        {"date": dt.strftime("%Y-%m-%d"), "usd": round(float(v), 2)}
+        for dt, v in zip(gold_series.index, gold_series)
+    ]
+
     X_gold = df[GOLD_FEATURES].ffill().iloc[-1:].to_numpy(dtype=np.float32)
     X_fx = df[USDINR_FEATURES].ffill().iloc[-1:].to_numpy(dtype=np.float32)
 
@@ -76,6 +83,7 @@ def export_json():
         "engine": "GitHub Actions · LightGBM + Linear + CFTC/GVZ",
         "spot_usd_oz_close": round(last_close, 2),
         "history_30d_ratios": history_ratios,
+        "history_daily": history_daily,
         "macro": {
             "realYield10y": round(float(df["real_yield_10y"].iloc[-1]), 2),
             "breakevenInfl": round(float(df["breakeven_infl"].iloc[-1]), 2),

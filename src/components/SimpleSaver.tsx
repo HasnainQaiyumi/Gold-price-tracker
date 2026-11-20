@@ -6,11 +6,12 @@ import {
   projectSavings,
   timingSignal,
 } from '../lib/savingsPlan';
-import type { HistoryPoint, PricingAssumptions } from '../lib/types';
+import type { PricingAssumptions } from '../lib/types';
 
 interface Props {
   spotUsdOz: number;
-  history30d: HistoryPoint[];
+  /** Last ~30 REAL daily closes (USD/oz); null when real history is unavailable. */
+  closes30: number[] | null;
   assumptions: PricingAssumptions;
 }
 
@@ -24,19 +25,19 @@ const SCENARIOS = [
 const aed = (v: number) =>
   Number.isFinite(v) ? 'AED ' + Math.round(v).toLocaleString('en-US') : '—';
 
-export function SimpleSaver({ spotUsdOz, history30d, assumptions }: Props) {
+export function SimpleSaver({ spotUsdOz, closes30, assumptions }: Props) {
   const [monthly, setMonthly] = useState(100);
   const [years, setYears] = useState(10);
   const [rate, setRate] = useState(8);
 
   const quote = useMemo(() => getGoldQuote(spotUsdOz, assumptions), [spotUsdOz, assumptions]);
-  const signal = useMemo(() => timingSignal(spotUsdOz, history30d), [spotUsdOz, history30d]);
+  const signal = useMemo(() => (closes30 ? timingSignal(spotUsdOz, closes30) : null), [spotUsdOz, closes30]);
   const plan = projectSavings(monthly, years, rate, quote);
   const yrsTo1M = monthsToTarget(monthly, 1_000_000, rate, quote) / 12;
   const need20 = monthlyNeeded(1_000_000, 20, rate, quote);
 
   const signalColor =
-    signal.label === 'Below average' ? 'text-[#10b981]' : signal.label === 'Above average' ? 'text-[#f59e0b]' : 'text-[#94a3b8]';
+    signal?.label === 'Below average' ? 'text-[#10b981]' : signal?.label === 'Above average' ? 'text-[#f59e0b]' : 'text-[#94a3b8]';
 
   return (
     <section aria-label="Simple gold saver" className="rounded-xl bg-[#11161e] border border-[#e5b842]/30 p-5 flex flex-col gap-5">
@@ -62,10 +63,11 @@ export function SimpleSaver({ spotUsdOz, history30d, assumptions }: Props) {
         </div>
         <div className="rounded-lg bg-[#090c10] border border-white/[0.08] p-4">
           <div className="text-xs text-[#94a3b8]">Price vs 30-day average</div>
-          <div className={`text-2xl font-bold ${signalColor}`}>{signal.label}</div>
+          <div className={`text-2xl font-bold ${signalColor}`}>{signal ? signal.label : 'Unavailable'}</div>
           <div className="text-xs text-[#94a3b8] mt-1">
-            {signal.pct >= 0 ? '+' : ''}
-            {signal.pct.toFixed(1)}%. Descriptive only, not a prediction. Keep buying on schedule either way.
+            {signal
+              ? `${signal.pct >= 0 ? '+' : ''}${signal.pct.toFixed(1)}%. Descriptive only, not a prediction. Keep buying on schedule either way.`
+              : 'Needs real price history and a live quote.'}
           </div>
         </div>
       </div>

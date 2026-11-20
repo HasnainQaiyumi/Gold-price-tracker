@@ -4,6 +4,7 @@ import { ArbitrageCalculator } from './components/ArbitrageCalculator';
 import { CurrencyCards } from './components/CurrencyCards';
 import { ForecastChart } from './components/ForecastChart';
 import { MacroSimulator } from './components/MacroSimulator';
+import { PriceHistory } from './components/PriceHistory';
 import { SimpleSaver } from './components/SimpleSaver';
 import { TopHeader } from './components/TopHeader';
 import {
@@ -11,6 +12,7 @@ import {
   WEIGHT_UNITS,
   convertUsdOzToMarket,
 } from './lib/goldPricing';
+import { withLiveSpot } from './lib/goldAnalytics';
 import { computeQuantForecast, generateFallbackHistory } from './lib/quantForecast';
 import type {
   CurrencyCode,
@@ -44,6 +46,8 @@ const FALLBACK_MARKET: MarketDataPayload = {
     change24hPct: -0.42,
   },
 };
+
+const AED_PEG = 3.6725; // official fixed peg
 
 const PURITIES: KaratPurity[] = [24, 22, 21, 18];
 
@@ -79,11 +83,21 @@ export default function App() {
   const assumptions = useMemo(
     () => ({
       ...DEFAULT_ASSUMPTIONS,
-      usdAed: marketData.usdAed,
+      usdAed: AED_PEG,
       usdInr: marketData.usdInr,
       indiaDutyPct: scenario.indiaDutyPct,
     }),
-    [marketData.usdAed, marketData.usdInr, scenario.indiaDutyPct]
+    [marketData.usdInr, scenario.indiaDutyPct]
+  );
+
+  const closes30 = useMemo(
+    () =>
+      marketData.isLiveSpot && marketData.historyDaily?.length
+        ? withLiveSpot(marketData.historyDaily, marketData.spotUsdOz, marketData.quoteAt ?? marketData.updatedAt)
+            .slice(-30)
+            .map((d) => d.usd)
+        : null,
+    [marketData]
   );
 
   const syncMarket = useCallback(async (force = false) => {
@@ -114,9 +128,11 @@ export default function App() {
 
       let spotUsdOz = FALLBACK_MARKET.spotUsdOz;
       let isLiveSpot = false;
+      let quoteAt: string | undefined;
       if (goldRes && goldRes.ok) {
         const g = (await goldRes.json()) as { price?: number };
         if (typeof g.price === 'number' && g.price > 500) {
+          quoteAt = (g as { updatedAt?: string }).updatedAt;
           spotUsdOz = g.price;
           isLiveSpot = true;
         }
@@ -137,11 +153,15 @@ export default function App() {
       }
 
       let history30d = generateFallbackHistory(spotUsdOz);
+      let historyDaily: MarketDataPayload['historyDaily'];
+      let historyAsOf: string | undefined;
       let macro = FALLBACK_MARKET.macro;
       let isLiveMacro = false;
 
       if (mlRes && mlRes.ok) {
         const ml = (await mlRes.json()) as {
+          history_daily?: Array<{ date: string; usd: number }>;
+          generated_at?: string;
           history_30d_ratios?: Array<{ dateLabel: string; mult: number }>;
           macro?: MarketDataPayload['macro'];
         };
@@ -150,6 +170,10 @@ export default function App() {
             dateLabel: pt.dateLabel,
             usdOz: Number((spotUsdOz * pt.mult).toFixed(2)),
           }));
+        }
+        if (Array.isArray(ml.history_daily) && ml.history_daily.length >= 60) {
+          historyDaily = ml.history_daily;
+          historyAsOf = ml.generated_at;
         }
         if (ml.macro) {
           macro = ml.macro;
@@ -169,6 +193,9 @@ export default function App() {
         isLiveFx,
         isLiveMacro,
         updatedAt: new Date().toISOString(),
+        quoteAt,
+        historyDaily,
+        historyAsOf,
         history30d,
         macro,
       });
@@ -181,8 +208,13 @@ export default function App() {
 
   useEffect(() => {
     syncMarket(false);
-    const interval = setInterval(() => syncMarket(false), 30_000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => syncMarket(false), 15_000);
+    const onVisible = () => document.visibilityState === 'visible' && syncMarket(false);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [syncMarket]);
 
   // Evaluate armed alerts whenever spot/FX/duty updates
@@ -310,15 +342,19 @@ export default function App() {
     <div className="min-h-screen bg-[#090c10] text-[#f1f4f8] flex flex-col">
       <TopHeader
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={(sec) => {
+          setActiveSection(sec);
+          setShowPro(true);
+        }}
         onSyncFeed={() => syncMarket(true)}
         isSyncing={isSyncing}
       />
 
       <main className="flex-1 max-w-[1380px] w-full mx-auto px-6 py-6 flex flex-col gap-6">
+        <PriceHistory market={marketData} />
         <SimpleSaver
           spotUsdOz={marketData.spotUsdOz}
-          history30d={marketData.history30d}
+          closes30={closes30}
           assumptions={assumptions}
         />
         <button
