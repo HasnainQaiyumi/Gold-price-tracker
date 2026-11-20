@@ -4,6 +4,7 @@ import { Gate } from './components/Gate';
 import { GoldNow } from './components/GoldNow';
 import { MyGold } from './components/MyGold';
 import { RealisticPrediction } from './components/RealisticPrediction';
+import { TopProbabilities } from './components/TopProbabilities';
 import { PriceHistory } from './components/PriceHistory';
 import { ProChart } from './components/ProChart';
 import { WhyGoldMoved } from './components/WhyGoldMoved';
@@ -172,6 +173,7 @@ function Dashboard({ onLock }: { onLock: () => void }) {
         <WhyGoldMoved series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
 
         <RealisticPrediction series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
+        <TopProbabilities series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
 
         <div className="grid lg:grid-cols-2 gap-5 items-start">
           <MyGold holdings={holdings} setHoldings={setHoldings} spotUsd={spot?.usd ?? null} />
