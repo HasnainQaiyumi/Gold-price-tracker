@@ -311,3 +311,13 @@ test('performance: < 50 ms for 730 bars (3 horizons, incl. scorecard)', () => {
   times.sort((a, b) => a - b);
   assert.ok(times[3] < 50, `median ${times[3].toFixed(1)} ms`);
 });
+
+test('99% band: walk-forward on real gold it holds about 99% of the time and is the widest band', () => {
+  for (const h of [7, 30]) {
+    const f = forecastGold(REAL, REAL[REAL.length - 1].usd, [h])!;
+    const r = f.ranges[0];
+    assert.ok(r.sureLow < r.extremeLow && r.sureHigh > r.extremeHigh, 'widest');
+    const sc = f.scorecard.find((x) => x.horizonDays === h)!;
+    assert.ok(sc.sureHitRate >= 0.97, `h=${h} 99% band held ${(sc.sureHitRate * 100).toFixed(1)}%`);
+  }
+});

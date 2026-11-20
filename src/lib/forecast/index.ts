@@ -34,6 +34,10 @@ export const PRIOR_Q68 = 1.0;
 export const PRIOR_Q95 = 2.22;
 /** Prior weight in effective independent observations. k=20 was the only setting (of 0,5,10,20,40)
  * keeping walk-forward coverage within 3 points of nominal at both 7 and 30 days (report table E1). */
+/** 99% multiplier prior. Measured walk-forward on real daily gold (PAXG 2024-26): 3.36 (7d), 3.16 (30d);
+ * 55 years of monthly data give q99/q95 = 1.3-1.45 (fat tails), i.e. about 3.1 on top of PRIOR_Q95. */
+export const PRIOR_Q99 = 3.2;
+
 export const PRIOR_STRENGTH = 20;
 /** Bars used to seed the variance recursion. */
 export const INIT_BARS = 20;
@@ -54,6 +58,7 @@ export const MIN_SCORECARD_PERIODS = 5;
 export const CONSTANTS_FITTED_THROUGH = '2026-11-19';
 export const LIKELY_PROB = 0.68;
 export const EXTREME_PROB = 0.95;
+export const SURE_PROB = 0.99;
 /** Share of up-months in gold's monthly prices 1971-2026 (52.3% of 637 months). Used as the 30-day
  * probability of a rise because no direction signal was proven: the only Bonferroni survivor (price vs
  * 10-month average, 1 month) had no edge over "always up" in 2008-2026 (52% vs 54%) (report section 6). */
@@ -193,6 +198,7 @@ export interface WalkForward {
   /** Calibrated multipliers at t: likely band = +/- q68 * sd, extreme band = +/- q95 * sd. */
   q68: Float64Array;
   q95: Float64Array;
+  q99: Float64Array;
   /** Index of the bar exactly h calendar days after t, or -1 if that bar is not in the input. */
   outcome: Int32Array;
   /** Number of past scores whose outcome was known at t. */
@@ -205,6 +211,7 @@ export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
   const sd = new Float64Array(n).fill(NaN);
   const q68 = new Float64Array(n).fill(NaN);
   const q95 = new Float64Array(n).fill(NaN);
+  const q99 = new Float64Array(n).fill(NaN);
   const outcome = new Int32Array(n).fill(-1);
   const known = new Int32Array(n);
   const indexOfDay = new Map<number, number>();
@@ -227,8 +234,9 @@ export function walkForward(s: Series, vol: VolPath, h: number): WalkForward {
     known[t] = m;
     q68[t] = shrink(conformalQuantile(sorted, LIKELY_PROB), PRIOR_Q68, m, h);
     q95[t] = shrink(conformalQuantile(sorted, EXTREME_PROB), PRIOR_Q95, m, h);
+    q99[t] = Math.max(q95[t], shrink(conformalQuantile(sorted, SURE_PROB), PRIOR_Q99, m, h));
   }
-  return { sd, q68, q95, outcome, known };
+  return { sd, q68, q95, q99, outcome, known };
 }
 
 /** Walk-forward hit rates over origins whose own prefix had >= MIN_BARS bars (overlapping windows).
@@ -238,6 +246,7 @@ export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
   let samples = 0;
   let likely = 0;
   let extreme = 0;
+  let sure = 0;
   for (let t = MIN_BARS - 1; t < s.p.length; t++) {
     const k = wf.outcome[t];
     if (k < 0 || !(wf.sd[t] > 0) || !Number.isFinite(wf.sd[t]) || !Number.isFinite(wf.q68[t]) || !Number.isFinite(wf.q95[t])) continue;
@@ -245,16 +254,18 @@ export function scorecardFor(s: Series, wf: WalkForward, h: number): Scorecard {
     samples++;
     if (z <= wf.q68[t] * wf.sd[t]) likely++;
     if (z <= wf.q95[t] * wf.sd[t]) extreme++;
+    if (z <= wf.q99[t] * wf.sd[t]) sure++;
   }
   return {
     horizonDays: h,
     samples,
     likelyHitRate: samples ? likely / samples : NaN,
     extremeHitRate: samples ? extreme / samples : NaN,
+    sureHitRate: samples ? sure / samples : NaN,
   };
 }
 
-function rangeAt(now: number, sd: number, q68: number, q95: number, h: number): RangeForecast {
+function rangeAt(now: number, sd: number, q68: number, q95: number, q99: number, h: number): RangeForecast {
   return {
     days: h,
     now,
@@ -265,6 +276,9 @@ function rangeAt(now: number, sd: number, q68: number, q95: number, h: number): 
     extremeHigh: now * Math.exp(q95 * sd),
     likelyProb: LIKELY_PROB,
     extremeProb: EXTREME_PROB,
+    sureLow: now * Math.exp(-q99 * sd),
+    sureHigh: now * Math.exp(q99 * sd),
+    sureProb: SURE_PROB,
   };
 }
 
@@ -293,8 +307,8 @@ export function forecastGold(bars: readonly DailyBar[], spotUsd: number, horizon
   const scorecard: Scorecard[] = [];
   for (const h of hs) {
     const wf = walkForward(s, vol, h);
-    const r = rangeAt(now, wf.sd[last], wf.q68[last], wf.q95[last], h);
-    if (![r.likelyLow, r.likelyHigh, r.extremeLow, r.extremeHigh].every((x) => Number.isFinite(x))) return null;
+    const r = rangeAt(now, wf.sd[last], wf.q68[last], wf.q95[last], wf.q99[last], h);
+    if (![r.likelyLow, r.likelyHigh, r.extremeLow, r.extremeHigh, r.sureLow, r.sureHigh].every((x) => Number.isFinite(x))) return null;
     ranges.push(r);
     const sc = scorecardFor(s, wf, h);
     if (sc.samples >= MIN_SCORECARD_SAMPLES && sc.samples >= MIN_SCORECARD_PERIODS * h) scorecard.push(sc);

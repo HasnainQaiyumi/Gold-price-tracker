@@ -3,7 +3,7 @@ import { Alerts } from './components/Alerts';
 import { Gate } from './components/Gate';
 import { GoldNow } from './components/GoldNow';
 import { MyGold } from './components/MyGold';
-import { Outlook } from './components/Outlook';
+import { RealisticPrediction } from './components/RealisticPrediction';
 import { PriceHistory } from './components/PriceHistory';
 import { ProChart } from './components/ProChart';
 import { WhyGoldMoved } from './components/WhyGoldMoved';
@@ -171,7 +171,7 @@ function Dashboard({ onLock }: { onLock: () => void }) {
 
         <WhyGoldMoved series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
 
-        <Outlook result={forecast} toAed={toAed} unitText={unitText} karat={karat} />
+        <RealisticPrediction series={series} spotUsd={spot?.usd ?? null} toAed={toAed} unitText={unitText} />
 
         <div className="grid lg:grid-cols-2 gap-5 items-start">
           <MyGold holdings={holdings} setHoldings={setHoldings} spotUsd={spot?.usd ?? null} />

@@ -17,6 +17,9 @@ export interface RangeForecast {
   extremeHigh: number;
   likelyProb: number; // e.g. 0.68
   extremeProb: number; // e.g. 0.95
+  sureLow: number; // "99% sure" band, nominal probability = sureProb
+  sureHigh: number;
+  sureProb: number; // 0.99
 }
 
 export interface DirectionView {
@@ -31,6 +34,7 @@ export interface Scorecard {
   samples: number; // number of past predictions checked (walk-forward, no look-ahead)
   likelyHitRate: number; // share of past outcomes that landed inside the likely band
   extremeHitRate: number; // share inside the extreme band
+  sureHitRate: number; // share inside the 99% band
 }
 
 export interface ForecastResult {
