@@ -41,11 +41,11 @@ export function Alerts({ alerts, setAlerts, price24 }: { alerts: PriceAlert[]; s
           <div key={a.id} className="py-2 flex items-center justify-between gap-3 text-xs">
             <span className="font-mono-num">
               {a.dir === 'above' ? 'Rises to' : 'Falls to'} <span className="text-[#f4efe6] font-semibold">{a.target}</span>
-              <span className={`ml-2 ${a.firedAt ? 'text-[#f0cf72]' : 'text-[#7d7667]'}`}>
+              <span className={`ml-2 ${a.firedAt ? 'text-[#f0cf72]' : 'text-[#8a8374]'}`}>
                 {a.firedAt ? `triggered ${new Date(a.firedAt).toLocaleTimeString()}` : 'armed'}
               </span>
             </span>
-            <span className="flex gap-3 text-[10px] text-[#7d7667]">
+            <span className="flex gap-3 text-[10px] text-[#8a8374]">
               {a.firedAt && <button type="button" className="underline underline-offset-2 hover:text-[#f0cf72] cursor-pointer" onClick={() => setAlerts((p) => p.map((x) => (x.id === a.id ? { ...x, firedAt: undefined } : x)))}>re-arm</button>}
               <button type="button" className="underline underline-offset-2 hover:text-[#ef6b6b] cursor-pointer" onClick={() => setAlerts((p) => p.filter((x) => x.id !== a.id))}>remove</button>
             </span>
@@ -53,13 +53,13 @@ export function Alerts({ alerts, setAlerts, price24 }: { alerts: PriceAlert[]; s
         ))}
       </div>
 
-      <p className="text-[10px] text-[#7d7667] mt-3 leading-relaxed">
+      <p className="text-[10px] text-[#8a8374] mt-3 leading-relaxed">
         Alerts are checked while this page is open in your browser (a background tab is fine). They cannot run when the page is closed.{' '}
         {perm === 'default' && <button type="button" className="underline underline-offset-2 text-[#f0cf72] cursor-pointer" onClick={() => Notification.requestPermission().then(setPerm)}>Turn on desktop notifications</button>}
         {perm === 'granted' && 'Desktop notifications are on.'}
         {perm === 'denied' && 'Desktop notifications are blocked in your browser; you will still see alerts here.'}
       </p>
-      <p className="text-[10px] text-[#7d7667] mt-2 leading-relaxed">
+      <p className="text-[10px] text-[#8a8374] mt-2 leading-relaxed">
         Email and WhatsApp alerts run every 10 minutes even when this page is closed.{' '}
         <a href="https://github.com/HasnainQaiyumi/Gold-price-tracker/edit/main/public/alerts.config.json" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 text-[#f0cf72]">Change their prices</a>
       </p>

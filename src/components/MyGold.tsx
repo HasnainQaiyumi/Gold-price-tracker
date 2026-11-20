@@ -45,7 +45,7 @@ export function MyGold({ holdings, setHoldings, spotUsd }: { holdings: Holding[]
       {err && <div role="alert" className="text-xs text-[#ef6b6b] mt-2">{err}</div>}
 
       {holdings.length === 0 ? (
-        <p className="text-xs text-[#7d7667] mt-4">Add what you own to see its live value and profit or loss.</p>
+        <p className="text-xs text-[#8a8374] mt-4">Add what you own to see its live value and profit or loss.</p>
       ) : (
         <div className="mt-4 flex flex-col divide-y divide-white/[0.06]">
           {holdings.map((h) => {
@@ -54,14 +54,14 @@ export function MyGold({ holdings, setHoldings, spotUsd }: { holdings: Holding[]
               <div key={h.id} className="py-2.5 grid grid-cols-[1fr_auto] gap-x-3 text-xs items-center">
                 <div>
                   <span className="font-semibold text-[#f4efe6]">{h.grams} g · {h.karat}K</span>
-                  <span className="text-[#7d7667]"> {h.paidAed > 0 ? `paid AED ${fmtAed(h.paidAed)}` : 'cost not entered'}</span>
-                  {s?.breakEven24 != null && <div className="text-[10px] text-[#7d7667]">breaks even when 24K spot reaches AED {s.breakEven24.toFixed(2)}/g</div>}
+                  <span className="text-[#8a8374]"> {h.paidAed > 0 ? `paid AED ${fmtAed(h.paidAed)}` : 'cost not entered'}</span>
+                  {s?.breakEven24 != null && <div className="text-[10px] text-[#8a8374]">breaks even when 24K spot reaches AED {s.breakEven24.toFixed(2)}/g</div>}
                 </div>
                 <div className="text-right font-mono-num">
                   <div className="text-[#f0cf72] font-semibold">{s ? `AED ${fmtAed(s.sellValue)}` : '—'}</div>
                   {s?.pl != null && <div className={tone(s.pl)}>{sign(s.pl)}{fmtAed(Math.abs(s.pl))} ({s.plPct!.toFixed(1)}%)</div>}
                 </div>
-                <button type="button" onClick={() => setHoldings((p) => p.filter((x) => x.id !== h.id))} className="text-[10px] text-[#7d7667] hover:text-[#ef6b6b] underline underline-offset-2 justify-self-start cursor-pointer mt-1" aria-label={`Remove ${h.grams} g ${h.karat}K`}>remove</button>
+                <button type="button" onClick={() => setHoldings((p) => p.filter((x) => x.id !== h.id))} className="text-[10px] text-[#8a8374] hover:text-[#ef6b6b] underline underline-offset-2 justify-self-start cursor-pointer mt-1" aria-label={`Remove ${h.grams} g ${h.karat}K`}>remove</button>
               </div>
             );
           })}
@@ -76,7 +76,7 @@ export function MyGold({ holdings, setHoldings, spotUsd }: { holdings: Holding[]
           )}
         </div>
       )}
-      <p className="text-[10px] text-[#7d7667] mt-3 leading-relaxed">Values assume a 1% shop buy-back cut below spot and ignore making charges. A real shop may offer less.</p>
+      <p className="text-[10px] text-[#8a8374] mt-3 leading-relaxed">Values assume a 1% shop buy-back cut below spot and ignore making charges. A real shop may offer less.</p>
     </Panel>
   );
 }

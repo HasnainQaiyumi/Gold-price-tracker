@@ -137,7 +137,7 @@ export function RealisticPrediction({ series, spotUsd, toAed, unitText, implied,
       <div className="mt-4 grid sm:grid-cols-3 gap-3">
         {path.map((p) => (
           <div key={p.days} className="rounded-2xl bg-[#0d0c09] border border-white/[0.07] p-4">
-            <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667]">In {LABEL[p.days] ?? `${p.days} days`} · {monthDay(p.date)}</div>
+            <div className="text-[11px] uppercase tracking-[0.12em] text-[#8a8374]">In {LABEL[p.days] ?? `${p.days} days`} · {monthDay(p.date)}</div>
             <div className="font-display text-2xl font-semibold text-[#f0cf72] mt-1">{aed2(toAed(p.usd))}</div>
             <div className="text-[12px] text-[#6fcf97] mt-0.5">
               +{(toAed(p.usd) - now).toFixed(2)} AED vs today (+{((p.usd / spotUsd - 1) * 100).toFixed(1)}%)

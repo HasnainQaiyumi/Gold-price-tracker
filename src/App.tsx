@@ -245,7 +245,7 @@ function Dashboard({ onLock }: { onLock: () => void }) {
           </details>
         )}
 
-        <footer className="text-[11px] text-[#7d7667] leading-relaxed pb-8">
+        <footer className="text-[11px] text-[#8a8374] leading-relaxed pb-8">
           Informational only, not financial advice. Prices are the global spot rate; shops charge making charges and a premium. Gold can fall as well as rise.
           Your holdings and alerts are stored only in this browser.
         </footer>

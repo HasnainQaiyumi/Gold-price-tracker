@@ -303,7 +303,7 @@ export function ProChart({
   const tone = (v: number | null) => (v === null ? 'text-[#a39b8a]' : v >= 0 ? 'text-[#6fcf97]' : 'text-[#ef6b6b]');
   const kv = (k: string, v: string, cls = 'text-[#f4efe6]') => (
     <span className="whitespace-nowrap">
-      <span className="text-[#7d7667]">{k}</span> <span className={cls}>{v}</span>
+      <span className="text-[#8a8374]">{k}</span> <span className={cls}>{v}</span>
     </span>
   );
 
@@ -341,7 +341,7 @@ export function ProChart({
             {legend.c.volume > 0 && kv('Vol', `${fmtVol(legend.c.volume)} oz`, 'text-[#a39b8a]')}
           </>
         ) : (
-          <span className="text-[#7d7667]">AED {unitText}</span>
+          <span className="text-[#8a8374]">AED {unitText}</span>
         )}
       </div>
 
@@ -361,7 +361,7 @@ export function ProChart({
             <div>
               <div className="mx-auto mb-3 h-1 w-24 rounded-full bg-gradient-to-r from-transparent via-[#d9a93f]/50 to-transparent animate-pulse" />
               <p className="text-xs text-[#a39b8a]">Daily candles are loading or temporarily unavailable.</p>
-              <p className="text-[11px] text-[#7d7667] mt-1">Only real market data is charted, never placeholders.</p>
+              <p className="text-[11px] text-[#8a8374] mt-1">Only real market data is charted, never placeholders.</p>
             </div>
           </div>
         )}
@@ -379,13 +379,13 @@ export function ProChart({
             {story.next && <StoryRow arrow={story.next.arrow} label="Next" text={story.next.text} />}
             {story.latest && <StoryRow arrow="future" label="Next" text={story.latest} />}
           </ul>
-          <p className="mt-3 text-[11px] text-[#7d7667]">
+          <p className="mt-3 text-[11px] text-[#8a8374]">
             Move your cursor (or finger) across the chart to read any day. The arrow marked "this day" is where you are; the second arrow shows where the price actually was about a month later.
           </p>
         </div>
       )}
 
-      <p className="mt-2 text-[10px] text-[#7d7667]">
+      <p className="mt-2 text-[10px] text-[#8a8374]">
         Source: Coinbase PAXG-USD (1 PAXG = 1 troy oz of gold, trades 24/7, so SMA periods count calendar days). Volume is PAXG traded.
       </p>
     </Panel>

@@ -29,7 +29,7 @@ function Sources({ items, now }: { items: Headline[]; now: number }) {
   return (
     <ul className="mt-2 flex flex-col gap-1">
       {items.map((h, i) => (
-        <li key={`${h.title}-${i}`} className="text-[11px] leading-snug text-[#7d7667]">
+        <li key={`${h.title}-${i}`} className="text-[11px] leading-snug text-[#8a8374]">
           {h.link ? (
             <a href={h.link} target="_blank" rel="noopener noreferrer" className="text-[#a39b8a] hover:text-[#f0cf72] hover:underline underline-offset-2">
               {h.title}
@@ -66,7 +66,7 @@ function DriverCard({ d, now }: { d: Driver; now: number }) {
       </p>
 
       <div className="mt-4">
-        <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667] mb-2">How it reaches the gold price</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] text-[#8a8374] mb-2">How it reaches the gold price</div>
         <p className="text-[15px] leading-[1.8] text-[#e8e1d2]">{d.story}</p>
       </div>
 
@@ -188,7 +188,7 @@ export function WhyGoldMoved({ series, spotUsd, toAed, unitText }: Props) {
 
           {x.lesson.title && (
             <div className="rounded-2xl border border-white/[0.08] bg-[#0d0c09] p-4 md:p-5">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-[#7d7667] font-semibold">📚 Today's lesson</div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-[#8a8374] font-semibold">📚 Today's lesson</div>
               <h4 className="font-display text-lg font-semibold text-[#f0cf72] mt-1">{x.lesson.title}</h4>
               <p className="mt-2 text-[15px] leading-[1.75] text-[#e8e1d2]">{x.lesson.body}</p>
             </div>
@@ -201,7 +201,7 @@ export function WhyGoldMoved({ series, spotUsd, toAed, unitText }: Props) {
             </div>
           )}
 
-          <footer className="border-t border-white/[0.06] pt-3 text-[11px] text-[#7d7667] flex flex-col gap-2">
+          <footer className="border-t border-white/[0.06] pt-3 text-[11px] text-[#8a8374] flex flex-col gap-2">
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               {briefFresh ? (
                 <>

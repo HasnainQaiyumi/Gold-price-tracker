@@ -91,9 +91,9 @@ export function GoldNow({ spot, paxg, feedOk, series, toAed, unitText, karat, on
           <div className="flex items-center gap-2 text-xs text-[#a39b8a]">
             <span className={`dot dot-${state}`} />
             {status}
-            <span className="text-[#7d7667]">· {mkt.open ? 'Market open' : 'Market closed'}</span>
+            <span className="text-[#8a8374]">· {mkt.open ? 'Market open' : 'Market closed'}</span>
           </div>
-          <div className="mt-2 text-xs uppercase tracking-[0.14em] text-[#7d7667]">Gold {karat}K · {unitText}</div>
+          <div className="mt-2 text-xs uppercase tracking-[0.14em] text-[#8a8374]">Gold {karat}K · {unitText}</div>
           <div className={`price tabular-nums ${flash ? `flash-${flash}` : ''}`}>
             <span className="text-[0.38em] mr-2 text-[#a39b8a] align-middle">AED</span>
             {fmtAed(price)}
@@ -109,7 +109,7 @@ export function GoldNow({ spot, paxg, feedOk, series, toAed, unitText, karat, on
         </div>
         <div>
           <Spark pts={spark} />
-          <div className="flex justify-between text-[10px] text-[#7d7667] mt-1">
+          <div className="flex justify-between text-[10px] text-[#8a8374] mt-1">
             <span>14 days</span>
             <button type="button" onClick={onRefresh} className="underline underline-offset-2 hover:text-[#f0cf72] cursor-pointer">refresh now</button>
           </div>
@@ -122,7 +122,7 @@ export function GoldNow({ spot, paxg, feedOk, series, toAed, unitText, karat, on
         </div>
       )}
 
-      <div className="mt-4 pt-3 border-t border-white/[0.06] text-[11px] leading-relaxed text-[#7d7667]">
+      <div className="mt-4 pt-3 border-t border-white/[0.06] text-[11px] leading-relaxed text-[#8a8374]">
         gold-api.com XAU/USD spot, checked every 8s · AED at the fixed 3.6725 peg ·{' '}
         {karat !== 24 && `${karat}K = ${((karat / 24) * 100).toFixed(1)}% pure gold, this is the value of the gold itself · `}
         {paxg && dev !== null ? (

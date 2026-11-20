@@ -20,7 +20,7 @@ export function Panel({ title, hint, children, className = '' }: { title?: strin
       {(title || hint) && (
         <header className="flex items-baseline justify-between gap-3 mb-3">
           {title && <h2 className="panel-title">{title}</h2>}
-          {hint && <div className="text-[11px] text-[#7d7667]">{hint}</div>}
+          {hint && <div className="text-[11px] text-[#8a8374]">{hint}</div>}
         </header>
       )}
       {children}

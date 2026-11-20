@@ -131,7 +131,7 @@ export function PriceHistory({ series, toAed: g, unitText, statsOnly = false }: 
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         {stat('1M / 3M / 1Y', <span><span className={tone(calc.r1m)}>{pct(calc.r1m)}</span> / <span className={tone(calc.r3m)}>{pct(calc.r3m)}</span> / <span className={tone(calc.r1y)}>{pct(calc.r1y)}</span></span>)}
-        {stat('RSI (14)', <span>{calc.rsi === null ? '—' : calc.rsi.toFixed(0)} <span className="text-[#7d7667]">{calc.rsi === null ? '' : calc.rsi > 70 ? 'overbought' : calc.rsi < 30 ? 'oversold' : 'neutral'}</span></span>)}
+        {stat('RSI (14)', <span>{calc.rsi === null ? '—' : calc.rsi.toFixed(0)} <span className="text-[#8a8374]">{calc.rsi === null ? '' : calc.rsi > 70 ? 'overbought' : calc.rsi < 30 ? 'oversold' : 'neutral'}</span></span>)}
         {stat('Volatility (30d, annual)', calc.vol === null ? '—' : `${calc.vol.toFixed(1)}%`)}
         {stat('Worst fall (1Y)', <span className="text-[#ef6b6b]">{pct(calc.dd)}</span>)}
         {stat('1Y high / low (AED)', `${g(calc.hi).toFixed(0)} / ${g(calc.lo).toFixed(0)}`)}
@@ -139,7 +139,7 @@ export function PriceHistory({ series, toAed: g, unitText, statsOnly = false }: 
         {stat('vs 50-day avg', <span className={tone(calc.vs50)}>{pct(calc.vs50)}</span>)}
         {stat('vs 200-day avg', <span className={tone(calc.vs200)}>{pct(calc.vs200)}</span>)}
       </div>
-      <div className="text-[11px] text-[#7d7667]">
+      <div className="text-[11px] text-[#8a8374]">
         Where these numbers come from: daily prices of PAXG, a digital token backed by real gold (1 token = 1 ounce). It trades every day of the week and stays within about 0.3% of the real gold price, and we adjust it to match today's live price.
       </div>
     </section>

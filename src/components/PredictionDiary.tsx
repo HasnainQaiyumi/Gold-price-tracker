@@ -15,7 +15,7 @@ function Verdict({ range, actual, due, toAed }: { range: DiaryRange; actual: num
     return (
       <div className="text-[13px] text-[#a39b8a]">
         <span className="text-[#e8e1d2]">{span}</span>
-        <span className="block text-[11px] text-[#7d7667]">⏳ result on {nice(due)}</span>
+        <span className="block text-[11px] text-[#8a8374]">⏳ result on {nice(due)}</span>
       </div>
     );
   }
@@ -49,19 +49,19 @@ export function PredictionDiary({ diary, toAed, unitText }: Props) {
 
       <div className="grid sm:grid-cols-3 gap-3 mb-4">
         <div className="rounded-2xl bg-[#0d0c09] border border-white/[0.07] p-4">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667]">Days recorded</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] text-[#8a8374]">Days recorded</div>
           <div className="font-display text-2xl font-semibold text-[#fbf7ef] mt-1">{s.days}</div>
-          <div className="text-[11px] text-[#7d7667] mt-1">since {nice(diary.startedAt)}</div>
+          <div className="text-[11px] text-[#8a8374] mt-1">since {nice(diary.startedAt)}</div>
         </div>
         <div className="rounded-2xl bg-[#0d0c09] border border-white/[0.07] p-4">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667]">Next-week ranges</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] text-[#8a8374]">Next-week ranges</div>
           <div className="font-display text-2xl font-semibold text-[#6fcf97] mt-1">{s.week.checked ? `${Math.round((s.week.inside / s.week.checked) * 100)}%` : '—'}</div>
-          <div className="text-[11px] text-[#7d7667] mt-1">{score(s.week)}</div>
+          <div className="text-[11px] text-[#8a8374] mt-1">{score(s.week)}</div>
         </div>
         <div className="rounded-2xl bg-[#0d0c09] border border-white/[0.07] p-4">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-[#7d7667]">Next-month ranges</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] text-[#8a8374]">Next-month ranges</div>
           <div className="font-display text-2xl font-semibold text-[#6fcf97] mt-1">{s.month.checked ? `${Math.round((s.month.inside / s.month.checked) * 100)}%` : '—'}</div>
-          <div className="text-[11px] text-[#7d7667] mt-1">{score(s.month)}</div>
+          <div className="text-[11px] text-[#8a8374] mt-1">{score(s.month)}</div>
         </div>
       </div>
 
@@ -74,7 +74,7 @@ export function PredictionDiary({ diary, toAed, unitText }: Props) {
       <div className="overflow-x-auto">
         <table className="w-full text-left min-w-[520px]">
           <thead>
-            <tr className="text-[11px] uppercase tracking-[0.1em] text-[#7d7667]">
+            <tr className="text-[11px] uppercase tracking-[0.1em] text-[#8a8374]">
               <th className="py-2 pr-3 font-semibold">Written on</th>
               <th className="py-2 pr-3 font-semibold">Price then</th>
               <th className="py-2 pr-3 font-semibold">Next week, 99% sure</th>
