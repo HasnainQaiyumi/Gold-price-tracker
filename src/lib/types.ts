@@ -10,6 +10,11 @@ export interface HistoryPoint {
   usdOz: number;
 }
 
+export interface DailyClose {
+  date: string; // YYYY-MM-DD
+  usd: number; // USD per troy oz
+}
+
 export interface MarketMacroTelemetry {
   realYield10y: number;
   breakevenInfl: number;
@@ -28,6 +33,11 @@ export interface MarketDataPayload {
   isLiveFx: boolean;
   isLiveMacro: boolean;
   updatedAt: string;
+  /** Timestamp of the live spot quote as reported by the provider (not the client clock). */
+  quoteAt?: string;
+  /** Real daily closes (~2y). Absent when unavailable; never synthesized. */
+  historyDaily?: DailyClose[];
+  historyAsOf?: string;
   history30d: HistoryPoint[];
   macro: MarketMacroTelemetry;
 }

@@ -1,6 +1,0 @@
-{
-  "name": "Aureus Bullion",
-  "description": "Actual market gold price tracker in INR, AED, and USD with multi-factor quantile forecasting, macro scenario stress-testing, and Dubai vs. India checkout arbitrage.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

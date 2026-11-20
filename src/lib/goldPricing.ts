@@ -189,3 +189,11 @@ export function computeDubaiVsIndiaArbitrage(
     cheaperMarket,
   };
 }
+
+/** AED is fixed to USD at 3.6725 (official peg). */
+export const AED_PEG = 3.6725;
+
+/** USD per troy oz -> AED per gram of 24K. */
+export function usdOzToAedPerG(usdOz: number): number {
+  return (usdOz / TROY_OZ_GRAMS) * AED_PEG;
+}
