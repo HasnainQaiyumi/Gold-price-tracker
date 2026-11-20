@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dailyDue, DEFAULT_CONFIG, dubaiClock, evaluateServerAlerts, inQuietHours, parseTargetsText, sanitizeConfig, sanitizeState, settingsFromEnv, type Facts } from './serverAlerts';
+import { dailyDue, DEFAULT_CONFIG, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, parseTargetsText, parseTargetsTextDetailed, sanitizeConfig, sanitizeState, settingsFromEnv, type Facts } from './serverAlerts';
 
 const facts = (p: number, extra: Partial<Facts> = {}): Facts => ({
   price24: p, prevClose24: 400, high52: 450, low52: 350, sma200: 400, day: '2026-11-20', marketOpen: true, ...extra,
@@ -60,6 +60,10 @@ test('plain-text targets are parsed forgivingly', () => {
   assert.deepEqual(parseTargetsText('above 445, below 400').map((r) => [r.dir, r.aedPerGram24k]), [['above', 445], ['below', 400]]);
   assert.deepEqual(parseTargetsText('rise 450.5; falls 390\n> 460').map((r) => [r.dir, r.aedPerGram24k]), [['above', 450.5], ['below', 390], ['above', 460]]);
   assert.deepEqual(parseTargetsText('hello, 445, sideways 300'), []);
+  assert.deepEqual(parseTargetsText('below 400 or above 445').map((r) => [r.dir, r.aedPerGram24k]), [['below', 400], ['above', 445]]);
+  assert.deepEqual(parseTargetsText('above 445 and below 400').map((r) => [r.dir, r.aedPerGram24k]), [['above', 445], ['below', 400]]);
+  assert.deepEqual(parseTargetsText('above 4,450').map((r) => r.aedPerGram24k), [4450]);
+  assert.deepEqual(parseTargetsTextDetailed('above 445 below 400, 420').skipped, ['above 445 below 400', '420']);
 });
 
 test('settings from repository variables override the file, junk keeps defaults', () => {
@@ -87,4 +91,11 @@ test('Dubai clock, quiet hours and daily summary timing', () => {
   assert.equal(dailyDue({ armed: {} }, t2, n), true);
   assert.equal(dailyDue({ armed: {}, lastDailyDay: '2026-11-20' }, t2, n), false, 'once per day');
   assert.equal(dailyDue({ armed: {} }, t2, { ...n, daily: 'off' }), false);
+});
+
+test('fresh memory does not re-fire targets that are already crossed', () => {
+  const c = sanitizeConfig({ targets: [{ id: 'a', dir: 'above', aedPerGram24k: 420 }, { id: 'b', dir: 'below', aedPerGram24k: 400 }] });
+  const s = freshState(c, 430);
+  assert.deepEqual(s.armed, { a: false, b: true });
+  assert.equal(evaluateServerAlerts(c, s, facts(431, { prevClose24: 430 })).events.filter((e) => e.kind === 'target').length, 0);
 });

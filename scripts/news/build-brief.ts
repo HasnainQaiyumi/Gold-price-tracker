@@ -26,7 +26,7 @@ async function aiCall(system: string, user: string, maxTokens = 600): Promise<st
     signal: AbortSignal.timeout(45000),
   });
   if (!res.ok) {
-    console.log(`ai: HTTP ${res.status}`);
+    console.log(`::warning title=AI brief::GitHub Models returned HTTP ${res.status} for ${MODEL}; using the rule-based text.`);
     return null;
   }
   const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
@@ -69,15 +69,15 @@ async function main() {
     const parsed = parseAiNews(await aiCall(system, user, 900), factsText(e), topicIds);
     const pieces = [parsed.summary, ...Object.values(parsed.whatHappened)].filter(Boolean).join(' ');
     if (!pieces) {
-      console.log('ai: unavailable or every piece rejected by the validator, using rule-based text');
+      console.log('::warning title=AI brief::no AI text passed the checks; using the rule-based text.');
     } else {
       const v = buildVerifyPrompt(pieces, e, headlines ?? []);
       const verdict = parseVerdict(await aiCall(v.system, v.user, 300));
       if (verdict.supported) ai = parsed;
-      else console.log(`ai: fact-check failed (${verdict.issues.length} issue(s)), using rule-based text`);
+      else console.log(`::warning title=AI brief::fact-check rejected the AI text (${verdict.issues.length} issue(s)); using the rule-based text.`);
     }
   } catch (err) {
-    console.log(`ai: error ${String((err as Error)?.message ?? err).slice(0, 120)}`);
+    console.log(`::warning title=AI brief::AI step error (${String((err as Error)?.message ?? err).slice(0, 120)}); using the rule-based text.`);
   }
   const explainer = buildExplainer(e, ai, Math.floor(now.getTime() / 86400e3));
   const paragraph = explainerToParagraph(explainer);
@@ -99,5 +99,5 @@ async function main() {
 
 main().catch((e) => {
   // Never block a deploy because of the news brief; the app falls back to a live paragraph.
-  console.log(`brief failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+  console.log(`::warning title=AI brief::brief not rebuilt (${String((e as Error)?.message ?? e).slice(0, 200)}); the previous brief stays live.`);
 });

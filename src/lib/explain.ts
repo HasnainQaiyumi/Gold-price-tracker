@@ -668,10 +668,12 @@ export function recentMood(f: PriceFacts | null): Mood {
 
 function fitSentence(lean: ThemeLean, mood: Mood): string {
   if ((lean !== 'up' && lean !== 'down') || (mood !== 'up' && mood !== 'down')) return '';
-  if (lean === mood) return mood === 'up' ? 'That fits with gold going up lately.' : 'That fits with gold going down lately.';
+  // Name the time window explicitly ("the last two days" = the news window behind `mood`),
+  // so this can never read as contradicting a 'today' or 'past week' sentence nearby.
+  if (lean === mood) return mood === 'up' ? 'That fits with gold rising over the last two days.' : 'That fits with gold falling over the last two days.';
   return mood === 'down'
-    ? 'But gold still went down lately, so other things probably mattered more.'
-    : 'But gold still went up lately, so other things probably mattered more.';
+    ? 'But gold still fell over the last two days, so other things probably mattered more.'
+    : 'But gold still rose over the last two days, so other things probably mattered more.';
 }
 
 export function dollarSentence(d: DollarMove | null | undefined): string | null {

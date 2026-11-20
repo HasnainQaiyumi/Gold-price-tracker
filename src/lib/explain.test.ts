@@ -259,7 +259,7 @@ test('"Why" cites real headlines and says whether the topic fits the move', () =
   assert.deepEqual(ex.why.map((w) => w.id), ['dollar', 'fed']);
   assert.equal(ex.why[0].lean, 'down');
   assert.match(ex.why[0].text, /dollar got stronger/);
-  assert.match(ex.why[0].text, /That fits with gold going down lately\./);
+  assert.match(ex.why[0].text, /That fits with gold falling over the last two days\./);
   for (const w of ex.why) {
     assert.ok(w.headlines.length > 0, 'every news-based reason cites at least one headline');
     for (const c of w.headlines) assert.ok(items.includes(c), 'cited headline must be one we were given');
@@ -273,7 +273,7 @@ test('"Why" cites real headlines and says whether the topic fits the move', () =
 test('theme that goes against the move is called out, not hidden', () => {
   const ex = explain({ facts: facts({ twoDayPct: -1.5 }), headlines: [h('Gold steady as rate cut hopes grow')], nowMs: NOW });
   assert.equal(ex.why[0].id, 'fed');
-  assert.match(ex.why[0].text, /But gold still went down lately, so other things probably mattered more\./);
+  assert.match(ex.why[0].text, /But gold still fell over the last two days, so other things probably mattered more\./);
   const flat = explain({ facts: facts({ twoDayPct: 0.1 }), headlines: [h('Gold steady as rate cut hopes grow')], nowMs: NOW });
   assert.doesNotMatch(flat.why[0].text, /fits|other things/);
 });

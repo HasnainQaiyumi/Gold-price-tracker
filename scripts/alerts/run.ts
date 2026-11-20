@@ -18,7 +18,9 @@ import { usdOzToAedPerG } from '../../src/lib/goldPricing';
 import { marketStatus } from '../../src/lib/market';
 import { BRIEF_MAX_AGE_HOURS, sanitizeBrief } from '../../src/lib/brief';
 import type { Explainer } from '../../src/lib/teach';
-import { dailyDue, dubaiClock, evaluateServerAlerts, inQuietHours, sanitizeConfig, sanitizeState, settingsFromEnv, type AlertEvent, type Facts } from '../../src/lib/serverAlerts';
+import { dailyDue, dubaiClock, evaluateServerAlerts, freshState, inQuietHours, sanitizeConfig, sanitizeState, settingsFromEnv, type AlertEvent, type Facts } from '../../src/lib/serverAlerts';
+import { happenedSentences, priceFacts } from '../../src/lib/explain';
+import type { DailyBar } from '../../src/lib/forecast/types';
 
 const SITE_URL = 'https://hasnainqaiyumi.github.io/Gold-price-tracker/';
 const CONFIG_URL = 'https://github.com/HasnainQaiyumi/Gold-price-tracker/edit/main/public/alerts.config.json';
@@ -33,24 +35,47 @@ const readJson = (p: string): unknown => {
   }
 };
 
-async function sendEmail(ctx: AlertContext): Promise<boolean> {
-  const user = process.env.GMAIL_USER, pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) {
-    console.log('email: not configured (GMAIL_USER / GMAIL_APP_PASSWORD secrets missing), skipped');
-    return false;
+type SendResult = 'sent' | 'skipped' | 'failed';
+const emailReady = () => !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+const whatsappReady = () => !!(process.env.WHATSAPP_PHONE && process.env.CALLMEBOT_APIKEY);
+const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
+
+async function sendEmail(ctx: AlertContext): Promise<SendResult> {
+  if (!emailReady()) return 'skipped';
+  const user = process.env.GMAIL_USER as string, pass = process.env.GMAIL_APP_PASSWORD as string;
+  try {
+    const png = new Resvg(chartSvg(ctx.closes30, ctx.targets), { fitTo: { mode: 'width', value: 1120 } }).render().asPng();
+    const t = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
+    await t.sendMail({
+      from: `"Gold alerts" <${user}>`,
+      to: process.env.ALERT_EMAIL_TO || user,
+      subject: renderSubject(ctx),
+      text: renderEmailText(ctx),
+      html: renderEmailHtml(ctx),
+      attachments: [{ filename: 'gold-chart.png', content: png, cid: 'chart' }],
+    });
+    console.log('email: sent');
+    return 'sent';
+  } catch (e) {
+    console.log(`::warning title=Email alert::sending failed (${errText(e)}). Check the GMAIL_APP_PASSWORD secret.`);
+    return 'failed';
   }
-  const png = new Resvg(chartSvg(ctx.closes30, ctx.targets), { fitTo: { mode: 'width', value: 1120 } }).render().asPng();
-  const t = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
-  await t.sendMail({
-    from: `"Gold alerts" <${user}>`,
-    to: process.env.ALERT_EMAIL_TO || user,
-    subject: renderSubject(ctx),
-    text: renderEmailText(ctx),
-    html: renderEmailHtml(ctx),
-    attachments: [{ filename: 'gold-chart.png', content: png, cid: 'chart' }],
-  });
-  console.log('email: sent');
-  return true;
+}
+
+async function sendWhatsApp(ctx: AlertContext): Promise<SendResult> {
+  if (!whatsappReady()) return 'skipped';
+  try {
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(process.env.WHATSAPP_PHONE as string)}&text=${encodeURIComponent(renderWhatsApp(ctx))}&apikey=${encodeURIComponent(process.env.CALLMEBOT_APIKEY as string)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    const body = await res.text();
+    // CallMeBot answers 200 with an HTML page; failures mention "error"/"invalid". Never log the URL (it holds the key).
+    const ok = res.ok && !/error|invalid|not allowed/i.test(body);
+    console.log(ok ? 'whatsapp: sent' : `::warning title=WhatsApp alert::sending failed (HTTP ${res.status})`);
+    return ok ? 'sent' : 'failed';
+  } catch {
+    console.log('::warning title=WhatsApp alert::sending failed (network error)');
+    return 'failed';
+  }
 }
 
 async function latestBrief(): Promise<{ paragraph: string; explainer: Explainer | null } | null> {
@@ -63,34 +88,17 @@ async function latestBrief(): Promise<{ paragraph: string; explainer: Explainer 
   }
 }
 
-async function sendWhatsApp(ctx: AlertContext): Promise<boolean> {
-  const phone = process.env.WHATSAPP_PHONE, key = process.env.CALLMEBOT_APIKEY;
-  if (!phone || !key) {
-    console.log('whatsapp: not configured (WHATSAPP_PHONE / CALLMEBOT_APIKEY secrets missing), skipped');
-    return false;
-  }
-  const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(renderWhatsApp(ctx))}&apikey=${encodeURIComponent(key)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-  const body = await res.text();
-  // CallMeBot answers 200 with an HTML page; failures mention "error"/"invalid".
-  const ok = res.ok && !/error|invalid|not allowed/i.test(body);
-  console.log(`whatsapp: ${ok ? 'sent' : `failed (HTTP ${res.status})`}`);
-  return ok;
-}
-
-async function deliver(ctx: AlertContext, email: boolean, whatsapp: boolean): Promise<boolean> {
-  const jobs: Promise<boolean>[] = [];
-  if (email) jobs.push(sendEmail(ctx));
-  if (whatsapp) jobs.push(sendWhatsApp(ctx));
-  const results = await Promise.allSettled(jobs);
-  results.forEach((r) => r.status === 'rejected' && console.log(`send error: ${String((r.reason as Error)?.message ?? r.reason).slice(0, 200)}`));
-  return results.some((r) => r.status === 'fulfilled' && r.value);
+/** Sends on the given channels. `attempted` = a configured channel was actually tried. */
+async function deliver(ctx: AlertContext, ch: { email: boolean; whatsapp: boolean }) {
+  const results = await Promise.all([ch.email ? sendEmail(ctx) : Promise.resolve<SendResult>('skipped'), ch.whatsapp ? sendWhatsApp(ctx) : Promise.resolve<SendResult>('skipped')]);
+  return { sent: results.includes('sent'), attempted: results.some((r) => r !== 'skipped'), failed: results.includes('failed') && !results.includes('sent') };
 }
 
 async function main() {
   const test = process.env.ALERT_TEST === '1';
-  const { config: cfg, notify } = settingsFromEnv(process.env, sanitizeConfig(readJson(CONFIG_PATH)));
-  const prev = sanitizeState(readJson(STATE_PATH));
+  const { config: cfg, notify, skippedTargets } = settingsFromEnv(process.env, sanitizeConfig(readJson(CONFIG_PATH)));
+  if (skippedTargets.length) console.log(`::warning title=Alert settings::could not read these ALERT_TARGETS parts, ignored: ${skippedTargets.join(' | ')}. Use e.g. "above 445, below 400".`);
+  if (!emailReady() && !whatsappReady()) console.log('::warning title=Alert settings::no channel is set up (add the GMAIL_USER and GMAIL_APP_PASSWORD secrets).');
 
   const spot = await fetchSpot();
   const history = await fetchPaxgHistory().catch(() => null);
@@ -98,11 +106,18 @@ async function main() {
   const nowMs = Date.now();
   const today = new Date(nowMs).toISOString().slice(0, 10);
 
+  const stored = readJson(STATE_PATH);
+  const prev = stored ? sanitizeState(stored) : freshState(cfg, price24);
+  if (!stored && !test) console.log('alert memory missing: starting fresh (targets already crossed will not be re-sent)');
+
   // Align PAXG history with spot, drop today's partial candle, append the live price.
   let closes: number[] = [];
+  let series: DailyBar[] = [];
   if (history?.length) {
     const k = spot.usd / history[history.length - 1].usd;
-    closes = history.filter((d) => d.date < today).map((d) => usdOzToAedPerG(d.usd * k));
+    const past = history.filter((d) => d.date < today).map((d) => ({ date: d.date, usd: d.usd * k }));
+    closes = past.map((d) => usdOzToAedPerG(d.usd));
+    series = [...past, { date: today, usd: spot.usd }];
   }
   const past365 = closes.slice(-365);
   const withNow = [...closes, price24];
@@ -127,34 +142,61 @@ async function main() {
     alertEvents = r.events;
     next = r.state;
   }
-  const morning = !test && dailyDue(prev, nowMs, notify);
   const clock = dubaiClock(nowMs);
   const quiet = inQuietHours(clock.hour, notify.quietHours);
-  console.log(`price ${price24.toFixed(2)} AED/g, market ${facts.marketOpen ? 'open' : 'closed/stale'}, ${cfg.targets.length} targets, alerts: ${alertEvents.map((e) => e.kind).join(',') || 'none'}${morning ? ', morning summary due' : ''}${quiet ? ', WhatsApp quiet hours' : ''}`);
+  const morning = !test && dailyDue(prev, nowMs, notify);
+  console.log(`price ${price24.toFixed(2)} AED/g, market ${facts.marketOpen ? 'open' : 'closed/stale'}, ${cfg.targets.length} targets, alerts: ${alertEvents.map((e) => e.kind).join(',') || 'none'}${morning ? ', morning briefing due' : ''}${quiet ? ', WhatsApp quiet hours' : ''}`);
   if (!alertEvents.length && !morning) {
     if (!test) save(next);
     return;
   }
 
   const brief = await latestBrief();
-  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief: brief?.paragraph ?? null, explainer: brief?.explainer ?? null };
+  let explainer = brief?.explainer ?? null;
+  if (explainer && series.length > 30) {
+    // The brief can be up to a few hours old: rebuild its price sentences from live data so nothing contradicts the header.
+    const fmtPrice = (usd: number) => `AED ${usdOzToAedPerG(usd).toFixed(2)} per gram of 24K gold`;
+    explainer = { ...explainer, happened: happenedSentences(priceFacts(series, spot.usd), fmtPrice).join(' ') };
+  }
+  const base = { price24, prevClose24: facts.prevClose24, closes30: withNow.slice(-30), targets: cfg.targets, quoteAt: spot.at, siteUrl: SITE_URL, configUrl: CONFIG_URL, brief: brief?.paragraph ?? null, explainer };
 
   let failed = false;
   if (alertEvents.length) {
-    const ok = await deliver({ ...base, events: alertEvents }, true, !quiet);
-    if (!ok) {
-      // Keep the old state so the alert is retried next run, and fail the job so GitHub notifies the owner.
-      console.log('no channel delivered the alert');
-      next = { ...prev, lastDailyDay: next.lastDailyDay };
-      failed = true;
+    const ch = { email: emailReady(), whatsapp: whatsappReady() && !quiet };
+    if (!ch.email && !ch.whatsapp) {
+      if (whatsappReady() && quiet) {
+        console.log('alert waiting: WhatsApp is in quiet hours and email is not set up');
+        next = { ...prev }; // keep it pending; it will be sent after quiet hours
+      } else {
+        console.log('alert not sent: no channel is set up');
+      }
+    } else {
+      const r = await deliver({ ...base, events: alertEvents }, ch);
+      if (!r.sent) {
+        console.log('alert not delivered; will retry next run');
+        next = { ...prev };
+        failed = r.attempted;
+      }
     }
   }
   if (morning) {
-    const ok = await deliver({ ...base, events: [{ kind: 'daily' }] }, notify.daily === 'email' || notify.daily === 'both', notify.daily === 'whatsapp' || notify.daily === 'both');
-    if (ok) next = { ...next, lastDailyDay: clock.date };
-    else {
-      console.log('morning summary not delivered');
-      failed = true;
+    const wantEmail = notify.daily === 'email' || notify.daily === 'both';
+    const wantWa = notify.daily === 'whatsapp' || notify.daily === 'both';
+    const ch = { email: wantEmail && emailReady(), whatsapp: wantWa && whatsappReady() && !quiet };
+    const ctx = { ...base, prevClose24: facts.marketOpen ? facts.prevClose24 : null, events: [{ kind: 'daily' } as AlertEvent] };
+    if (!ch.email && !ch.whatsapp) {
+      if (wantWa && whatsappReady() && quiet) console.log('morning briefing waiting for WhatsApp quiet hours to end');
+      else {
+        console.log(`::warning title=Morning briefing::DAILY_SUMMARY is "${notify.daily}" but that channel is not set up; skipped for today.`);
+        next = { ...next, lastDailyDay: clock.date };
+      }
+    } else {
+      const r = await deliver(ctx, ch);
+      if (r.sent) next = { ...next, lastDailyDay: clock.date };
+      else {
+        console.log('morning briefing not delivered; will retry next run');
+        failed = failed || r.attempted;
+      }
     }
   }
   if (!test) save(next);
@@ -167,7 +209,6 @@ function save(state: unknown) {
 }
 
 main().catch((e) => {
-  console.log(`alert run failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+  console.log(`::error title=Gold alerts::run failed (${errText(e)})`);
   process.exitCode = 1;
 });
-

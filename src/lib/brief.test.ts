@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPrompt, buildVerifyPrompt, factsText, parseAiNews, parseGoogleNewsRss, parseVerdict, ruleParagraph, sanitizeBrief, sanitizeExplainer, validateAiParagraph } from './brief';
+import { buildPrompt, buildVerifyPrompt, factsText, validateAiText, parseAiNews, parseGoogleNewsRss, parseVerdict, ruleParagraph, sanitizeBrief, sanitizeExplainer, validateAiParagraph } from './brief';
 import { buildExplainer, LESSONS } from './teach';
 import { explainerHtml, whatsappExplainer } from './alertMessages';
 import { explain, priceFacts } from './explain';
@@ -161,4 +161,27 @@ test('WhatsApp explainer stays within its length cap; email HTML escapes content
   const html = explainerHtml({ ...x, summary: '<b>bold</b> summary text here' }, true);
   assert.ok(html.includes('&lt;b&gt;bold'));
   assert.ok(html.includes('Today'));
+});
+
+test('validator blocks the reviewer\'s attack text: fake whole numbers, years, wrong direction, advice, predictions', () => {
+  const allowed = 'Gold is up 1.2% today. It now costs about AED 412.35 per gram.';
+  const ok = 'Gold is up 1.2% today and costs about AED 412.35 per gram. Reports say interest rates may fall in the next few months. Gold pays no interest, so lower rates can make it more attractive.';
+  assert.equal(typeof validateAiText(ok, allowed, 10, 200), 'string');
+  const attacks = [
+    'Gold crashed 40% today and is now AED 99 per gram. Reports say that this is a big move for many people in the city.',
+    'Reports say the central bank banned gold sales from 2027. Gold is up 1.2% today and many people are talking about it.',
+    'Gold fell 1.2% today, according to reports. Many people are talking about the price and what it means for them.',
+    'Gold is up 1.2% today. Experts say buy gold now before it is too late for everyone in the market.',
+    'Gold is up 1.2% today. Others say sell everything today because the market is very worried about it.',
+    'Gold is up 1.2% today. Gold will surely double soon, according to some voices in the market today.',
+    'Gold is up 1.2% today. Analysts expect the price to keep climbing over the coming weeks in many markets.',
+    'Gold is up 1.2% today. {"summary": "x"} is what some people wrote in the market news this morning.',
+  ];
+  for (const a of attacks) assert.equal(validateAiText(a, allowed, 10, 200), null, a);
+  assert.equal(typeof validateAiText('Gold is up 1.2% today. Reports say it was the third day of gains in 2 weeks for the metal.', allowed, 10, 200), 'string', '"2 weeks" is a count');
+});
+
+test('parseAiNews returns nothing for the attack summary', () => {
+  const raw = JSON.stringify({ summary: 'Gold crashed 40% today and is now AED 99 per gram. Experts say buy gold now. Gold will surely double by 2028.', topics: {} });
+  assert.equal(parseAiNews(raw, 'Gold is up 1.2% today.', []).summary, null);
 });

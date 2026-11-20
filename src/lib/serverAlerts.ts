@@ -165,18 +165,29 @@ export interface NotifySettings {
 
 export const DEFAULT_NOTIFY: NotifySettings = { daily: 'email', dailyHourDubai: 8, quietHours: [23, 7] };
 
-/** "above 445, below 400" / "rise 445; fall 400" / "445 up, 400 down" -> target rules. */
-export function parseTargetsText(text: string): TargetRule[] {
-  const out: TargetRule[] = [];
-  for (const part of text.split(/[,;\n]+/).map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 20)) {
-    const num = part.match(/\d+(?:\.\d+)?/);
-    if (!num) continue;
-    const v = Number(num[0]);
-    const dir = /\b(above|over|rise|rises|up|high|>)\b|>/.test(part) ? 'above' : /\b(below|under|fall|falls|drop|drops|down|low)\b|</.test(part) ? 'below' : null;
-    if (!dir || !(v >= 1 && v <= 100000)) continue;
-    out.push({ id: `${dir}-${v}`, dir, aedPerGram24k: v });
+/** "above 445, below 400" / "rise 445; fall 400" / "below 400 or above 445" -> target rules (+ pieces it could not read). */
+export function parseTargetsTextDetailed(text: string): { rules: TargetRule[]; skipped: string[] } {
+  const rules: TargetRule[] = [];
+  const skipped: string[] = [];
+  const cleaned = text.replace(/(\d),(?=\d{3}\b)/g, '$1'); // "4,450" -> "4450"
+  for (const raw of cleaned.split(/[,;\n]+|\s+(?:or|and)\s+/i).map((x) => x.trim()).filter(Boolean).slice(0, 20)) {
+    const part = raw.toLowerCase();
+    const nums = part.match(/\d+(?:\.\d+)?/g) ?? [];
+    const up = /\b(above|over|rise|rises|rising|up|high|higher)\b|>/.test(part);
+    const down = /\b(below|under|fall|falls|falling|drop|drops|down|low|lower)\b|</.test(part);
+    const v = Number(nums[0]);
+    if (nums.length !== 1 || up === down || !(v >= 1 && v <= 100000)) {
+      skipped.push(raw.slice(0, 40));
+      continue;
+    }
+    const dir = up ? 'above' : 'below';
+    rules.push({ id: `${dir}-${v}`, dir, aedPerGram24k: v });
   }
-  return out;
+  return { rules, skipped };
+}
+
+export function parseTargetsText(text: string): TargetRule[] {
+  return parseTargetsTextDetailed(text).rules;
 }
 
 const chan = (v: string | undefined, d: Channels): Channels => {
@@ -185,9 +196,14 @@ const chan = (v: string | undefined, d: Channels): Channels => {
 };
 
 /** Merge env (repository variables) over the file config. Unknown/malformed values keep defaults. */
-export function settingsFromEnv(env: Record<string, string | undefined>, file: AlertConfig): { config: AlertConfig; notify: NotifySettings } {
+export function settingsFromEnv(env: Record<string, string | undefined>, file: AlertConfig): { config: AlertConfig; notify: NotifySettings; skippedTargets: string[] } {
   const config: AlertConfig = { ...file };
-  if (env.ALERT_TARGETS && env.ALERT_TARGETS.trim()) config.targets = parseTargetsText(env.ALERT_TARGETS);
+  let skippedTargets: string[] = [];
+  if (env.ALERT_TARGETS && env.ALERT_TARGETS.trim()) {
+    const r = parseTargetsTextDetailed(env.ALERT_TARGETS);
+    config.targets = r.rules;
+    skippedTargets = r.skipped;
+  }
   const mv = (env.ALERT_DAILY_MOVE ?? '').trim().toLowerCase();
   if (mv === 'off') config.dailyMovePct = null;
   else if (mv && Number.isFinite(Number(mv)) && Number(mv) >= 0.1 && Number(mv) <= 50) config.dailyMovePct = Number(mv);
@@ -199,7 +215,14 @@ export function settingsFromEnv(env: Record<string, string | undefined>, file: A
     dailyHourDubai: Number.isInteger(hour) && hour >= 0 && hour <= 23 && (env.DAILY_SUMMARY_HOUR ?? '').trim() !== '' ? hour : DEFAULT_NOTIFY.dailyHourDubai,
     quietHours: qh === 'off' ? null : qm && +qm[1] <= 23 && +qm[2] <= 23 ? [+qm[1], +qm[2]] : DEFAULT_NOTIFY.quietHours,
   };
-  return { config, notify };
+  return { config, notify, skippedTargets };
+}
+
+/** After the alert memory is lost: arm only targets that are NOT already crossed, so old alerts are not re-sent. */
+export function freshState(cfg: AlertConfig, price24: number): AlertState {
+  const armed: Record<string, boolean> = {};
+  for (const t of cfg.targets) armed[t.id] = !(t.dir === 'above' ? price24 >= t.aedPerGram24k : price24 <= t.aedPerGram24k);
+  return { armed };
 }
 
 /** Dubai is UTC+4 all year (no daylight saving). */

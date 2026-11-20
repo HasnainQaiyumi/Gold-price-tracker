@@ -51,7 +51,7 @@ export function polish(text: string): string {
     seen.add(key);
     out.push(sent);
   }
-  let joined = out.join(' ').replace(/^Measured currency data: /m, 'Currency data confirms it: ').replace(/ Measured currency data: /, ' Currency data confirms it: ');
+  let joined = out.join(' ').replace(/(^| )Measured currency data: /, '$1Currency data shows: ');
   joined = joined.replace(/\b(the )?Fed\b/, (m) => `${m.startsWith('the') ? 'the' : 'The'} Fed (America's central bank, which sets US interest rates)`);
   return joined;
 }
@@ -146,16 +146,55 @@ export function validateAiText(raw: unknown, allowed: string, minWords: number, 
   const lens = sentences.map((x) => x.split(' ').length);
   if (Math.max(...lens) > 32 || lens.reduce((a, b) => a + b, 0) / lens.length > 20) return null; // keep it simple
   if (/\b(hawkish|dovish|yields?|basis points|bps|risk-off|risk-on|XAU|tailwinds?|headwinds?)\b/i.test(text)) return null;
-  if (/https?:|www\.|[*#`<>]|\n/.test(text)) return null;
-  if (/\b(you should|we recommend|buy now|sell now|guaranteed)\b/i.test(text)) return null;
+  if (/https?:|www\.|[*#`<>{}]|\n/.test(text)) return null;
+  // No advice and no predictions, however phrased.
+  if (/\b(you should|we recommend|guaranteed|recommend(?:ed|s)?|advis(?:e|ed|es))\b/i.test(text)) return null;
+  // Advice = telling the reader to act ("buy gold now", "sell everything today", "time to buy"), not describing what investors did.
+  if (/\b(buy|sell|dump|load up on)\s+(?:(?:gold|everything|more|it)\s+)?(now|today|immediately|right away|before)\b/i.test(text)) return null;
+  if (/\b(should|must|need to|ought to|time to|good time to|now is the time to|better to)\s+(buy|sell|invest|hold|dump)\b/i.test(text)) return null;
+  if (/\bsell everything\b/i.test(text)) return null;
+  if (/\bwill\s+(?:surely|definitely|certainly|probably|likely)?\s*(?:rise|fall|drop|double|halve|crash|soar|climb|surge|plunge|go up|go down|rebound|recover)\b/i.test(text)) return null;
+  if (/\b(expect(?:s|ed)?|forecasts?|predicts?|predicted|is set to|is poised to|is bound to)\b/i.test(text)) return null;
+
   const allowedNums = (allowed.match(NUM_RE) ?? []).map(toNum);
-  for (const tok of text.match(NUM_RE) ?? []) {
+  const inFacts = (v: number, tok: string) => allowedNums.some((a) => Math.abs(a - v) <= 0.5 * 10 ** -decimals(tok) + 1e-9);
+  for (const m of text.matchAll(NUM_RE)) {
+    const tok = m[0];
     const v = toNum(tok);
-    if (!tok.includes('.') && Number.isInteger(v) && (v <= 100 || (v >= 1900 && v <= 2100))) continue; // counts, days, years
-    const tol = 0.5 * 10 ** -decimals(tok) + 1e-9;
-    if (!allowedNums.some((a) => Math.abs(a - v) <= tol)) return null;
+    const at = m.index ?? 0;
+    const before = text.slice(Math.max(0, at - 6), at);
+    const after = text.slice(at + tok.length, at + tok.length + 14);
+    const marked = /^\s*(%|percent|per ?cent|aed|dirhams?|dollars?|usd|\/oz|an ounce|per gram|a gram|g\b)/i.test(after) || /(aed|usd|\$)\s*$/i.test(before);
+    const isYear = !tok.includes('.') && v >= 1900 && v <= 2100 && !marked;
+    const isCount = !marked && !tok.includes('.') && Number.isInteger(v) && v <= 100 && /^\s+(days?|weeks?|months?|years?|hours?|reasons?|things?|ways?|times|topics?|countries|banks?)\b/i.test(after);
+    if (isCount) continue;
+    if (isYear) {
+      if (!inFacts(v, tok)) return null; // a year must come from the sources
+      continue;
+    }
+    if (!inFacts(v, tok)) return null; // every price, percentage or other number must be in the facts
+  }
+  // Direction: a percentage next to "up/rose" must be an up fact; next to "down/fell" a down fact.
+  const facts = directionalFacts(allowed);
+  for (const m of text.matchAll(/\b(up|rose|risen|gained|higher|climbed|rallied|jumped|down|fell|fallen|dropped|lower|slid|crashed|plunged|declined|lost)\b[^.%]{0,30}?(\d+(?:\.\d+)?)\s*%/gi)) {
+    const dir = /^(up|rose|risen|gained|higher|climbed|rallied|jumped)$/i.test(m[1]) ? 'up' : 'down';
+    const v = Number(m[2]);
+    const known = facts.filter((f) => Math.abs(f.v - v) <= 0.5 * 10 ** -decimals(m[2]) + 1e-9);
+    if (known.length && !known.some((f) => f.dir === dir)) return null;
   }
   return text;
+}
+
+/** "down 0.9%", "up 2.4%", "2.4% stronger"... from the facts text, as signed facts. */
+export function directionalFacts(allowed: string): { v: number; dir: 'up' | 'down' }[] {
+  const out: { v: number; dir: 'up' | 'down' }[] = [];
+  for (const m of allowed.matchAll(/\b(up|down|rose|fell|higher|lower|above|below)\s+(\d+(?:\.\d+)?)%/gi)) {
+    out.push({ v: Number(m[2]), dir: /^(up|rose|higher|above)$/i.test(m[1]) ? 'up' : 'down' });
+  }
+  for (const m of allowed.matchAll(/(\d+(?:\.\d+)?)%\s+(above|below|stronger|weaker)/gi)) {
+    out.push({ v: Number(m[1]), dir: /^(above|stronger)$/i.test(m[2]) ? 'up' : 'down' });
+  }
+  return out;
 }
 
 /** Validates brief.json fetched by the browser (untrusted file). */
